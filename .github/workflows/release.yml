@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - "v*"   # Triggers on any tag like v1.0.0, v1.1.0, etc.
+      - "v*"   # Triggers on any tag like v1.0.1, v1.1.0, etc.
 
 jobs:
   build-and-release:
@@ -31,7 +31,7 @@ jobs:
         with:
           workspaces: src-tauri
 
-      - name: Build Tauri app
+      - name: Build and publish Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -43,6 +43,10 @@ jobs:
           releaseBody: |
             ## What's new
             See commit history for changes.
+
+            ## Download
+            - **Portable (recommended):** `WorkTimer.exe` — run from anywhere, no install needed
+            - **Installer:** `WorkTimer_x64-setup.exe` — installs to your PC
           releaseDraft: false
           prerelease: false
           includeUpdaterJson: true
@@ -50,6 +54,7 @@ jobs:
       - name: Upload portable exe to release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_name }}
           files: src-tauri/target/release/WorkTimer.exe
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
