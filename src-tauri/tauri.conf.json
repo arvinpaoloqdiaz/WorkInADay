@@ -27,7 +27,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": [],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -42,10 +42,7 @@
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDQ0MEU4QkE2QThFRUZBMjgKUldRbyt1Nm9wb3NPUkI2K0RJeW9HZU1zRCtqajFTTDVVdk90Z0lieUk0bUI2cWVUdWV3WHRabG4K",
       "endpoints": [
         "https://github.com/arvinpaoloqdiaz/WorkInADay/releases/latest/download/latest.json"
-      ],
-      "windows": {
-        "installMode": "passive"
-      }
+      ]
     }
   }
 }
