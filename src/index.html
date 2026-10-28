@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Work Timer</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-container" id="app-root">
+    <!-- Custom Draggable Frameless Header -->
+    <header class="app-header" data-tauri-drag-region>
+      <div class="logo-area" data-tauri-drag-region>
+        <span class="status-dot" id="global-status-dot"></span>
+        <span class="app-title" data-tauri-drag-region>WORK TIMER</span>
+      </div>
+      <div class="header-actions">
+        <!-- Compact Mode Toggle -->
+        <button id="btn-compact-toggle" class="icon-btn" title="Toggle Compact Sticky Mode" aria-label="Compact Mode">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="4 14 10 14 10 20"></polyline>
+            <polyline points="20 10 14 10 14 4"></polyline>
+            <line x1="14" y1="10" x2="21" y2="3"></line>
+            <line x1="3" y1="21" x2="10" y2="14"></line>
+          </svg>
+        </button>
+        <!-- Always on top Pin -->
+        <button id="btn-pin" class="icon-btn active" title="Toggle Always on Top" aria-label="Always on top">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="12" y1="17" x2="12" y2="22"></line>
+            <path d="M5 17h14v-2l-2-2V5a2 2 0 0 0-2-2H9a2 2 0 0 0-2 2v8l-2 2v2z"></path>
+          </svg>
+        </button>
+        <!-- Global Shortcut Settings button -->
+        <button id="btn-shortcut-toggle" class="icon-btn" title="Configure Global Shortcut (e.g. F9, Ctrl+Shift+S)" aria-label="Shortcut">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
+            <line x1="6" y1="8" x2="6" y2="8"></line>
+            <line x1="10" y1="8" x2="10" y2="8"></line>
+            <line x1="14" y1="8" x2="14" y2="8"></line>
+            <line x1="18" y1="8" x2="18" y2="8"></line>
+            <line x1="6" y1="12" x2="6" y2="12"></line>
+            <line x1="18" y1="12" x2="18" y2="12"></line>
+            <line x1="10" y1="16" x2="14" y2="16"></line>
+          </svg>
+        </button>
+        <!-- History button -->
+        <button id="btn-history-toggle" class="icon-btn" title="View History" aria-label="Workday history">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <polyline points="12 6 12 12 16 14"></polyline>
+          </svg>
+        </button>
+        <!-- Check for Update -->
+        <button id="btn-check-update" class="icon-btn" title="Check for Update" aria-label="Check for update">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="1 4 1 10 7 10"></polyline>
+            <path d="M3.51 15a9 9 0 1 0 .49-4.28"></path>
+          </svg>
+        </button>
+        <!-- Minimize window -->
+        <button id="btn-win-minimize" class="icon-btn" title="Minimize" aria-label="Minimize">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+          </svg>
+        </button>
+        <!-- Close window -->
+        <button id="btn-win-close" class="icon-btn btn-close-hover" title="Close" aria-label="Close">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Screens Container -->
+    <main class="content-area">
+      
+      <!-- SCREEN A: SETUP / START WORKDAY -->
+      <section id="screen-setup" class="screen">
+        <div id="recovery-banner" class="alert-banner hidden">
+          <div class="alert-content">
+            <div class="alert-title-row">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="12"></line>
+                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+              </svg>
+              <strong>Unclosed Day Detected</strong>
+            </div>
+            <span id="recovery-desc" class="alert-sub">An active day was found.</span>
+          </div>
+          <div class="alert-actions">
+            <button id="btn-recover" class="btn btn-sm btn-primary">Resume Day</button>
+            <button id="btn-discard" class="btn btn-sm btn-subtle">Discard</button>
+          </div>
+        </div>
+
+        <div class="card setup-card">
+          <label class="section-label">DAILY WORK TARGET</label>
+          <div class="target-inputs">
+            <div class="input-group">
+              <input type="number" id="input-hours" min="0" max="24" value="8" />
+              <span class="input-unit">Hours</span>
+            </div>
+            <div class="input-sep">:</div>
+            <div class="input-group">
+              <input type="number" id="input-minutes" min="0" max="59" value="30" />
+              <span class="input-unit">Minutes</span>
+            </div>
+          </div>
+          <p class="target-summary" id="target-summary-text">Target: 8h 30m</p>
+
+          <button id="btn-start-day" class="btn btn-primary btn-large">Start Day</button>
+        </div>
+      </section>
+
+      <!-- SCREEN B: ACTIVE WORKDAY -->
+      <section id="screen-active" class="screen hidden">
+        <div class="date-badge" id="active-date-display">Today</div>
+
+        <!-- Primary Stats Grid (Hidden in compact mode) -->
+        <div class="stats-grid full-only">
+          <div class="stat-card">
+            <span class="stat-label">REMAINING</span>
+            <span class="stat-value text-accent" id="display-remaining">08:30:00</span>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">COMPLETED</span>
+            <span class="stat-value" id="display-completed">00:00:00</span>
+          </div>
+        </div>
+
+        <!-- Timer & Big Action Button -->
+        <div class="timer-control-panel">
+          <div class="session-timer-bar">
+            <span class="session-label" id="session-status-text">PAUSED</span>
+            <span class="session-timer" id="display-current-session">00:00:00</span>
+          </div>
+          <button id="btn-toggle-session" class="btn btn-action btn-start">
+            <svg id="btn-toggle-svg" width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+              <polygon points="5 3 19 12 5 21 5 3"></polygon>
+            </svg>
+            <span id="btn-toggle-text">START SESSION</span>
+          </button>
+        </div>
+
+        <!-- Target Met Notification -->
+        <div id="target-met-banner" class="met-banner hidden">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+            <polyline points="22 4 12 14.01 9 11.01"></polyline>
+          </svg>
+          Daily Target Reached!
+        </div>
+
+        <!-- Today's Sessions Accordion / Table (Hidden in compact mode) -->
+        <div class="sessions-panel full-only">
+          <div class="sessions-header">
+            <span class="sessions-title">TODAY'S SESSIONS (<span id="session-count">0</span>)</span>
+            <button id="btn-copy-log" class="btn btn-xs" title="Copy TSV log for spreadsheets">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+              Copy
+            </button>
+          </div>
+          <div class="session-list-scroll">
+            <table class="session-table" id="session-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Start</th>
+                  <th>End</th>
+                  <th>Duration</th>
+                </tr>
+              </thead>
+              <tbody id="session-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Day Actions Footer (Hidden in compact mode) -->
+        <div class="active-footer full-only">
+          <button id="btn-finish-day" class="btn btn-sm btn-subtle" title="Mark this workday as completed">Finish Day</button>
+          <button id="btn-discard-day" class="btn btn-sm btn-danger" title="Discard this workday">Discard</button>
+        </div>
+      </section>
+
+      <!-- SCREEN C: WORKDAY HISTORY VIEW -->
+      <section id="screen-history" class="screen hidden">
+        <div class="history-topbar">
+          <h2 class="sub-title">Workday History</h2>
+          <button id="btn-close-history" class="icon-btn" title="Back to timer">
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+        <div class="history-list-scroll" id="history-container"></div>
+      </section>
+
+    </main>
+
+    <!-- In-App Confirmation Modal (Replaces browser alert/confirm) -->
+    <div id="modal-confirm" class="modal-backdrop hidden">
+      <div class="modal-dialog">
+        <h3 class="modal-title" id="modal-title">Confirmation</h3>
+        <p class="modal-message" id="modal-message">Are you sure?</p>
+        <div class="modal-actions">
+          <button id="modal-btn-cancel" class="btn btn-sm btn-subtle">Cancel</button>
+          <button id="modal-btn-ok" class="btn btn-sm btn-primary">Confirm</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Global Shortcut Config Modal -->
+    <div id="modal-shortcut" class="modal-backdrop hidden">
+      <div class="modal-dialog">
+        <h3 class="modal-title">Global Shortcut</h3>
+        <p class="modal-message">Press any key or shortcut combination while working in any app to Start/Stop sessions:</p>
+        <div style="margin-bottom: 12px;">
+          <input type="text" id="input-shortcut-key" placeholder="e.g. F9 or Ctrl+Shift+S" value="F9" style="width: 100%; height: 32px; background: var(--bg-input); border: 1px solid var(--border-color); border-radius: 4px; color: var(--text-main); font-family: var(--font-mono); font-size: 13px; text-align: center;" />
+          <span style="font-size: 10px; color: var(--text-muted); display: block; margin-top: 4px;">Supports keys like F9, F10, or CommandOrControl+Shift+S</span>
+        </div>
+        <div class="modal-actions">
+          <button id="modal-btn-shortcut-disable" class="btn btn-sm btn-danger">Disable</button>
+          <button id="modal-btn-shortcut-cancel" class="btn btn-sm btn-subtle">Cancel</button>
+          <button id="modal-btn-shortcut-save" class="btn btn-sm btn-primary">Save Keybind</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Update Modal -->
+    <div id="modal-update" class="modal-backdrop hidden">
+      <div class="modal-dialog">
+        <h3 class="modal-title">Update Available</h3>
+        <p class="modal-message" id="update-version-text"></p>
+        <p id="update-body-text" style="font-size: 11px; color: var(--text-muted); margin-bottom: 12px; white-space: pre-wrap; max-height: 80px; overflow-y: auto;"></p>
+        <div class="modal-actions">
+          <button id="modal-btn-update-cancel" class="btn btn-sm btn-subtle">Later</button>
+          <button id="modal-btn-update-install" class="btn btn-sm btn-primary">Install &amp; Restart</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="toast hidden">Copied to clipboard!</div>
+  </div>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
