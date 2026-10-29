@@ -159,22 +159,26 @@
         <div class="sessions-panel full-only">
           <div class="sessions-header">
             <span class="sessions-title">TODAY'S SESSIONS (<span id="session-count">0</span>)</span>
-            <button id="btn-copy-log" class="btn btn-xs" title="Copy TSV log for spreadsheets">
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-              </svg>
-              Copy
-            </button>
+            <div style="display: flex; gap: 4px; align-items: center;">
+              <button id="btn-add-today-session" class="btn btn-xs" title="Add manual session to today">
+                + Add Session
+              </button>
+              <button id="btn-copy-log" class="btn btn-xs" title="Copy TSV log for spreadsheets">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                </svg>
+                Copy
+              </button>
+            </div>
           </div>
           <div class="session-list-scroll">
             <table class="session-table" id="session-table">
               <thead>
                 <tr>
-                  <th>#</th>
-                  <th>Start</th>
-                  <th>End</th>
+                  <th style="width: 28px;">#</th>
                   <th>Duration</th>
+                  <th style="width: 60px; text-align: right;">Actions</th>
                 </tr>
               </thead>
               <tbody id="session-tbody"></tbody>
@@ -243,6 +247,70 @@
         <div class="modal-actions">
           <button id="modal-btn-update-cancel" class="btn btn-sm btn-subtle">Later</button>
           <button id="modal-btn-update-install" class="btn btn-sm btn-primary">Install &amp; Restart</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Edit / Add Session Modal -->
+    <div id="modal-edit-session" class="modal-backdrop hidden">
+      <div class="modal-dialog">
+        <h3 class="modal-title" id="edit-session-modal-title">Edit Session</h3>
+        <p class="modal-message" id="edit-session-modal-msg">Modify start and end dates and times for this session:</p>
+        <div class="edit-session-form">
+          <div class="form-row-2col">
+            <div class="form-group">
+              <label class="form-field-label">Start Date</label>
+              <input type="date" id="input-edit-date" class="modal-input" />
+            </div>
+            <div class="form-group">
+              <label class="form-field-label">Start Time</label>
+              <input type="time" id="input-edit-start" step="1" class="modal-input" />
+            </div>
+          </div>
+          <div class="form-row-2col" id="group-edit-end" style="margin-top: 8px;">
+            <div class="form-group">
+              <label class="form-field-label">End Date</label>
+              <input type="date" id="input-edit-end-date" class="modal-input" />
+            </div>
+            <div class="form-group">
+              <label class="form-field-label">End Time</label>
+              <input type="time" id="input-edit-end" step="1" class="modal-input" />
+            </div>
+          </div>
+          <span id="edit-running-hint" style="font-size: 10px; color: var(--warning); display: none; margin-top: 6px;">Session is currently running (end time updates live).</span>
+          <div id="edit-validation-error" class="validation-error-msg hidden"></div>
+        </div>
+        <div class="modal-actions" style="margin-top: 12px;">
+          <button id="modal-btn-edit-cancel" class="btn btn-sm btn-subtle">Cancel</button>
+          <button id="modal-btn-edit-save" class="btn btn-sm btn-primary">Save Changes</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Preview Session Details Modal -->
+    <div id="modal-preview-session" class="modal-backdrop hidden">
+      <div class="modal-dialog">
+        <h3 class="modal-title" id="preview-title">Session Details</h3>
+        <div class="preview-details-list">
+          <div class="preview-row">
+            <span class="preview-label">Session:</span>
+            <span class="preview-val" id="preview-session-num">#1</span>
+          </div>
+          <div class="preview-row">
+            <span class="preview-label">Start:</span>
+            <span class="preview-val" id="preview-start-dt">--</span>
+          </div>
+          <div class="preview-row">
+            <span class="preview-label">End:</span>
+            <span class="preview-val" id="preview-end-dt">--</span>
+          </div>
+          <div class="preview-row">
+            <span class="preview-label">Duration:</span>
+            <span class="preview-val text-accent" id="preview-duration">00:00:00</span>
+          </div>
+        </div>
+        <div class="modal-actions" style="margin-top: 14px;">
+          <button id="modal-btn-preview-close" class="btn btn-sm btn-primary">Close</button>
         </div>
       </div>
     </div>

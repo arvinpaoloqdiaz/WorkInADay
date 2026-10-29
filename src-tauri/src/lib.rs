@@ -20,6 +20,8 @@ pub struct Workday {
 pub struct Session {
     pub id: i64,
     pub workday_id: i64,
+    pub date_str: Option<String>,
+    pub end_date_str: Option<String>,
     pub start_time: String,
     pub end_time: Option<String>,
     pub duration_seconds: i64,
@@ -93,6 +95,49 @@ pub fn init_db(conn: &Connection) -> Result<(), rusqlite::Error> {
         CREATE INDEX IF NOT EXISTS idx_sessions_workday ON sessions(workday_id);
         ",
     )?;
+
+    // Backward-compatible schema migration:
+    // Ensure sessions has date_str and end_date_str columns
+    let mut stmt = conn.prepare("PRAGMA table_info(sessions)")?;
+    let mut has_date_col = false;
+    let mut has_end_date_col = false;
+    let mut rows = stmt.query([])?;
+    while let Some(row) = rows.next()? {
+        let name: String = row.get(1)?;
+        if name == "date_str" {
+            has_date_col = true;
+        } else if name == "end_date_str" {
+            has_end_date_col = true;
+        }
+    }
+
+    if !has_date_col {
+        conn.execute("ALTER TABLE sessions ADD COLUMN date_str TEXT", [])?;
+    }
+    if !has_end_date_col {
+        conn.execute("ALTER TABLE sessions ADD COLUMN end_date_str TEXT", [])?;
+    }
+
+    // Backfill any NULL date_str values using the associated workday's date_str
+    let _ = conn.execute(
+        "UPDATE sessions 
+         SET date_str = (
+             SELECT COALESCE(w.date_str, '') 
+             FROM workdays w 
+             WHERE w.id = sessions.workday_id
+         )
+         WHERE date_str IS NULL OR date_str = ''",
+        [],
+    );
+
+    // Backfill any NULL end_date_str values with date_str for completed sessions
+    let _ = conn.execute(
+        "UPDATE sessions 
+         SET end_date_str = date_str 
+         WHERE (end_date_str IS NULL OR end_date_str = '') AND end_time IS NOT NULL",
+        [],
+    );
+
     Ok(())
 }
 
@@ -116,7 +161,7 @@ fn calculate_state_internal(conn: &Connection, workday_id: i64) -> Result<Workda
 
     let mut session_stmt = conn
         .prepare(
-            "SELECT id, workday_id, start_time, end_time, duration_seconds, is_running 
+            "SELECT id, workday_id, date_str, end_date_str, start_time, end_time, duration_seconds, is_running 
              FROM sessions WHERE workday_id = ?1 ORDER BY id ASC",
         )
         .map_err(|e| e.to_string())?;
@@ -126,10 +171,12 @@ fn calculate_state_internal(conn: &Connection, workday_id: i64) -> Result<Workda
             Ok(Session {
                 id: row.get(0)?,
                 workday_id: row.get(1)?,
-                start_time: row.get(2)?,
-                end_time: row.get(3)?,
-                duration_seconds: row.get(4)?,
-                is_running: row.get::<_, i64>(5)? == 1,
+                date_str: row.get(2)?,
+                end_date_str: row.get(3)?,
+                start_time: row.get(4)?,
+                end_time: row.get(5)?,
+                duration_seconds: row.get(6)?,
+                is_running: row.get::<_, i64>(7)? == 1,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -236,10 +283,13 @@ fn start_session(
         return Err("A session is already running.".to_string());
     }
 
-    let now_rfc = Local::now().to_rfc3339();
+    let now = Local::now();
+    let now_rfc = now.to_rfc3339();
+    let date_str = now.format("%Y-%m-%d").to_string();
+
     conn.execute(
-        "INSERT INTO sessions (workday_id, start_time, duration_seconds, is_running) VALUES (?1, ?2, 0, 1)",
-        params![workday_id, now_rfc],
+        "INSERT INTO sessions (workday_id, date_str, start_time, duration_seconds, is_running) VALUES (?1, ?2, ?3, 0, 1)",
+        params![workday_id, date_str, now_rfc],
     )
     .map_err(|e| e.to_string())?;
 
@@ -264,6 +314,7 @@ fn stop_session(
     if let Some((sess_id, start_time_str)) = session_opt {
         let now = Local::now();
         let end_rfc = now.to_rfc3339();
+        let end_date_str = now.format("%Y-%m-%d").to_string();
         let duration = if let Ok(start_dt) = DateTime::parse_from_rfc3339(&start_time_str) {
             let start_local = start_dt.with_timezone(&Local);
             let diff = now.signed_duration_since(start_local).num_seconds();
@@ -277,8 +328,8 @@ fn stop_session(
         };
 
         conn.execute(
-            "UPDATE sessions SET end_time = ?1, duration_seconds = ?2, is_running = 0 WHERE id = ?3",
-            params![end_rfc, duration, sess_id],
+            "UPDATE sessions SET end_time = ?1, end_date_str = ?2, duration_seconds = ?3, is_running = 0 WHERE id = ?4",
+            params![end_rfc, end_date_str, duration, sess_id],
         )
         .map_err(|e| e.to_string())?;
     }
@@ -319,9 +370,10 @@ fn finish_day(
             0
         };
 
+        let end_date_str = now.format("%Y-%m-%d").to_string();
         let _ = conn.execute(
-            "UPDATE sessions SET end_time = ?1, duration_seconds = ?2, is_running = 0 WHERE id = ?3",
-            params![now_rfc, duration, sess_id],
+            "UPDATE sessions SET end_time = ?1, end_date_str = ?2, duration_seconds = ?3, is_running = 0 WHERE id = ?4",
+            params![now_rfc, end_date_str, duration, sess_id],
         );
     }
 
@@ -417,6 +469,137 @@ fn get_workday_details(
     workday_id: i64,
 ) -> Result<WorkdayState, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
+    calculate_state_internal(&conn, workday_id)
+}
+
+#[tauri::command]
+fn update_session(
+    state: tauri::State<'_, AppState>,
+    session_id: i64,
+    start_time: String,
+    end_time: Option<String>,
+    date_str: Option<String>,
+    end_date_str: Option<String>,
+) -> Result<WorkdayState, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+
+    // Fetch existing session info
+    let (workday_id, is_running): (i64, i64) = conn
+        .query_row(
+            "SELECT workday_id, is_running FROM sessions WHERE id = ?1",
+            params![session_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .map_err(|e| format!("Session not found: {}", e))?;
+
+    let start_dt = DateTime::parse_from_rfc3339(&start_time)
+        .map_err(|e| format!("Invalid start time RFC3339: {}", e))?;
+
+    let (duration_seconds, final_end_date) = if is_running == 1 {
+        // If it's currently running, duration is calculated relative to now
+        let now = Local::now();
+        let diff = now.signed_duration_since(start_dt.with_timezone(&Local)).num_seconds();
+        let current_duration = if diff > 0 { diff } else { 0 };
+        (current_duration, None)
+    } else {
+        if let Some(ref end_str) = end_time {
+            let end_dt = DateTime::parse_from_rfc3339(end_str)
+                .map_err(|e| format!("Invalid end time RFC3339: {}", e))?;
+            let diff = end_dt.signed_duration_since(start_dt).num_seconds();
+            if diff < 0 {
+                return Err("End time cannot be earlier than start time.".to_string());
+            }
+            let calculated_end_date = end_date_str.unwrap_or_else(|| end_dt.format("%Y-%m-%d").to_string());
+            (diff, Some(calculated_end_date))
+        } else {
+            (0, None)
+        }
+    };
+
+    // Update session date_str if provided, or derive from start_dt (YYYY-MM-DD)
+    let final_date_str = date_str.unwrap_or_else(|| start_dt.format("%Y-%m-%d").to_string());
+
+    conn.execute(
+        "UPDATE sessions 
+         SET start_time = ?1, end_time = ?2, duration_seconds = ?3, date_str = ?4, end_date_str = ?5 
+         WHERE id = ?6",
+        params![start_time, end_time, duration_seconds, final_date_str, final_end_date, session_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    calculate_state_internal(&conn, workday_id)
+}
+
+#[tauri::command]
+fn add_session_to_workday(
+    state: tauri::State<'_, AppState>,
+    workday_id: i64,
+    start_time: String,
+    end_time: String,
+    date_str: String,
+    end_date_str: String,
+) -> Result<WorkdayState, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+
+    // Verify workday exists and is not discarded
+    let status: String = conn
+        .query_row(
+            "SELECT status FROM workdays WHERE id = ?1",
+            params![workday_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| format!("Workday not found: {}", e))?;
+
+    if status == "discarded" {
+        return Err("Cannot add sessions to a discarded workday.".to_string());
+    }
+
+    let start_dt = DateTime::parse_from_rfc3339(&start_time)
+        .map_err(|e| format!("Invalid start time RFC3339: {}", e))?;
+    let end_dt = DateTime::parse_from_rfc3339(&end_time)
+        .map_err(|e| format!("Invalid end time RFC3339: {}", e))?;
+
+    let diff = end_dt.signed_duration_since(start_dt).num_seconds();
+    if diff < 0 {
+        return Err("End time cannot be earlier than start time.".to_string());
+    }
+
+    conn.execute(
+        "INSERT INTO sessions (workday_id, date_str, end_date_str, start_time, end_time, duration_seconds, is_running)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0)",
+        params![workday_id, date_str, end_date_str, start_time, end_time, diff],
+    )
+    .map_err(|e| e.to_string())?;
+
+    calculate_state_internal(&conn, workday_id)
+}
+
+#[tauri::command]
+fn resume_workday(
+    state: tauri::State<'_, AppState>,
+    workday_id: i64,
+) -> Result<WorkdayState, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+
+    let status: String = conn
+        .query_row(
+            "SELECT status FROM workdays WHERE id = ?1",
+            params![workday_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| format!("Workday not found: {}", e))?;
+
+    if status == "discarded" {
+        return Err("Cannot resume a discarded workday.".to_string());
+    }
+
+    // Reactivate workday so it can be tracked or added to live
+    conn.execute(
+        "UPDATE workdays SET status = 'active', completed_at = NULL WHERE id = ?1",
+        params![workday_id],
+    )
+    .map_err(|e| e.to_string())?;
+
     calculate_state_internal(&conn, workday_id)
 }
 
@@ -532,6 +715,9 @@ pub fn run() {
             get_current_state,
             get_history,
             get_workday_details,
+            update_session,
+            add_session_to_workday,
+            resume_workday,
             discard_workday,
             set_always_on_top,
             resize_window,

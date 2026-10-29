@@ -40,6 +40,7 @@ const sessionTbody = document.getElementById("session-tbody");
 const btnFinishDay = document.getElementById("btn-finish-day");
 const btnDiscardDay = document.getElementById("btn-discard-day");
 const btnCopyLog = document.getElementById("btn-copy-log");
+const btnAddTodaySession = document.getElementById("btn-add-today-session");
 
 const btnPin = document.getElementById("btn-pin");
 const btnCompactToggle = document.getElementById("btn-compact-toggle");
@@ -58,6 +59,29 @@ const modalTitle = document.getElementById("modal-title");
 const modalMessage = document.getElementById("modal-message");
 const modalBtnCancel = document.getElementById("modal-btn-cancel");
 const modalBtnOk = document.getElementById("modal-btn-ok");
+
+// Edit Session Modal Elements
+const modalEditSession = document.getElementById("modal-edit-session");
+const editSessionModalTitle = document.getElementById("edit-session-modal-title");
+const editSessionModalMsg = document.getElementById("edit-session-modal-msg");
+const inputEditDate = document.getElementById("input-edit-date");
+const inputEditStart = document.getElementById("input-edit-start");
+const inputEditEndDate = document.getElementById("input-edit-end-date");
+const inputEditEnd = document.getElementById("input-edit-end");
+const groupEditEnd = document.getElementById("group-edit-end");
+const editRunningHint = document.getElementById("edit-running-hint");
+const editValidationError = document.getElementById("edit-validation-error");
+const modalBtnEditCancel = document.getElementById("modal-btn-edit-cancel");
+const modalBtnEditSave = document.getElementById("modal-btn-edit-save");
+let editingSessionContext = null;
+
+// Preview Session Modal Elements
+const modalPreviewSession = document.getElementById("modal-preview-session");
+const previewSessionNum = document.getElementById("preview-session-num");
+const previewStartDt = document.getElementById("preview-start-dt");
+const previewEndDt = document.getElementById("preview-end-dt");
+const previewDuration = document.getElementById("preview-duration");
+const modalBtnPreviewClose = document.getElementById("modal-btn-preview-close");
 
 // Promise-based in-app confirmation modal (replaces window.confirm)
 function confirmModal(message, title = "Confirmation") {
@@ -116,6 +140,343 @@ function formatTimeString(isoString) {
   if (!isoString) return "--:--:--";
   const d = new Date(isoString);
   return d.toTimeString().split(" ")[0];
+}
+
+// Compact date format DD/MM/YY (e.g. 29/10/26)
+function formatCompactDate(isoString, fallbackDateStr) {
+  let d = null;
+  if (isoString) {
+    const parsed = new Date(isoString);
+    if (!isNaN(parsed.getTime())) {
+      d = parsed;
+    }
+  }
+  if (!d && fallbackDateStr) {
+    const parts = fallbackDateStr.trim().split("-");
+    if (parts.length === 3) {
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1;
+      const day = parseInt(parts[2], 10);
+      d = new Date(year, month, day);
+    } else {
+      const parsed = new Date(fallbackDateStr);
+      if (!isNaN(parsed.getTime())) d = parsed;
+    }
+  }
+  if (!d || isNaN(d.getTime())) return "--/--/--";
+
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const yy = String(d.getFullYear()).slice(-2);
+  return `${dd}/${mm}/${yy}`;
+}
+
+// Form input date YYYY-MM-DD
+function toInputDateValue(isoString, fallbackDateStr) {
+  if (fallbackDateStr && /^\d{4}-\d{2}-\d{2}$/.test(fallbackDateStr.trim())) {
+    return fallbackDateStr.trim();
+  }
+  let d = isoString ? new Date(isoString) : null;
+  if (!d || isNaN(d.getTime())) {
+    if (fallbackDateStr) {
+      d = new Date(fallbackDateStr);
+    }
+  }
+  if (!d || isNaN(d.getTime())) {
+    d = new Date();
+  }
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function toLocalTimeInputValue(isoString) {
+  if (!isoString) return "";
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return "";
+  const hours = String(d.getHours()).padStart(2, "0");
+  const mins = String(d.getMinutes()).padStart(2, "0");
+  const secs = String(d.getSeconds()).padStart(2, "0");
+  return `${hours}:${mins}:${secs}`;
+}
+
+function buildIsoFromDateAndTime(dateStr, timeStr) {
+  // dateStr is YYYY-MM-DD, timeStr is HH:MM or HH:MM:SS
+  const timeParts = timeStr.split(":");
+  const h = parseInt(timeParts[0], 10) || 0;
+  const m = parseInt(timeParts[1], 10) || 0;
+  const s = parseInt(timeParts[2], 10) || 0;
+
+  const dateParts = dateStr.split("-");
+  const year = parseInt(dateParts[0], 10);
+  const month = parseInt(dateParts[1], 10) - 1;
+  const day = parseInt(dateParts[2], 10);
+
+  const d = new Date(year, month, day, h, m, s);
+  
+  // Format to local ISO-like string with timezone offset for chrono RFC3339 compatibility
+  const pad = (n) => String(n).padStart(2, "0");
+  const yyyy = d.getFullYear();
+  const mm = pad(d.getMonth() + 1);
+  const dd = pad(d.getDate());
+  const hours = pad(d.getHours());
+  const mins = pad(d.getMinutes());
+  const secs = pad(d.getSeconds());
+
+  const offset = -d.getTimezoneOffset();
+  const sign = offset >= 0 ? "+" : "-";
+  const absOffset = Math.abs(offset);
+  const offH = pad(Math.floor(absOffset / 60));
+  const offM = pad(absOffset % 60);
+
+  return `${yyyy}-${mm}-${dd}T${hours}:${mins}:${secs}${sign}${offH}:${offM}`;
+}
+
+// Edit Session Modal Handler
+function openEditSessionModal(session, onSaveSuccess, sessionNum = 1) {
+  editingSessionContext = { mode: "edit", session, onSaveSuccess, sessionNum };
+  editSessionModalTitle.innerText = "Edit Session";
+  editSessionModalMsg.innerText = "Modify start and end dates and times for this session:";
+  editValidationError.classList.add("hidden");
+  editValidationError.innerText = "";
+
+  inputEditDate.value = toInputDateValue(session.start_time, session.date_str);
+  inputEditStart.value = toLocalTimeInputValue(session.start_time);
+
+  if (session.is_running) {
+    inputEditEndDate.disabled = true;
+    inputEditEnd.disabled = true;
+    inputEditEndDate.value = "";
+    inputEditEnd.value = "";
+    editRunningHint.style.display = "block";
+  } else {
+    inputEditEndDate.disabled = false;
+    inputEditEnd.disabled = false;
+    inputEditEndDate.value = toInputDateValue(session.end_time, session.end_date_str || session.date_str);
+    inputEditEnd.value = toLocalTimeInputValue(session.end_time);
+    editRunningHint.style.display = "none";
+  }
+
+  modalEditSession.classList.remove("hidden");
+  inputEditStart.focus();
+}
+
+// Add Session Modal Handler (Manual entry to past/active workday)
+function openAddSessionModal(workdayId, onSaveSuccess) {
+  editingSessionContext = { mode: "add", workdayId, onSaveSuccess };
+  editSessionModalTitle.innerText = "Add Session";
+  editSessionModalMsg.innerText = "Enter the start and end dates and times for the new session:";
+  editValidationError.classList.add("hidden");
+  editValidationError.innerText = "";
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  inputEditDate.value = todayStr;
+  inputEditStart.value = "09:00:00";
+  inputEditEndDate.disabled = false;
+  inputEditEnd.disabled = false;
+  inputEditEndDate.value = todayStr;
+  inputEditEnd.value = "10:00:00";
+  editRunningHint.style.display = "none";
+
+  modalEditSession.classList.remove("hidden");
+  inputEditStart.focus();
+}
+
+modalBtnEditCancel.addEventListener("click", () => {
+  modalEditSession.classList.add("hidden");
+  editingSessionContext = null;
+});
+
+modalEditSession.addEventListener("click", (e) => {
+  if (e.target === modalEditSession) {
+    modalEditSession.classList.add("hidden");
+    editingSessionContext = null;
+  }
+});
+
+modalBtnEditSave.addEventListener("click", async () => {
+  if (!editingSessionContext) return;
+  const isAdd = editingSessionContext.mode === "add";
+  const { session, workdayId, onSaveSuccess } = editingSessionContext;
+  const targetWorkdayId = isAdd ? workdayId : session.workday_id;
+
+  const startDateVal = inputEditDate.value.trim();
+  const startTimeVal = inputEditStart.value.trim();
+  const endDateVal = inputEditEndDate.value.trim();
+  const endTimeVal = inputEditEnd.value.trim();
+
+  const showEditError = (msg) => {
+    editValidationError.innerText = msg;
+    editValidationError.classList.remove("hidden");
+  };
+
+  if (!startDateVal) {
+    showEditError("Please select a valid start date.");
+    return;
+  }
+  if (!startTimeVal) {
+    showEditError("Please enter a valid start time.");
+    return;
+  }
+
+  const startIso = buildIsoFromDateAndTime(startDateVal, startTimeVal);
+  const startDt = new Date(startIso);
+  const now = new Date();
+
+  // Error Prevention: Start time in future
+  if (startDt.getTime() > now.getTime()) {
+    showEditError("Start time cannot be set in the future.");
+    return;
+  }
+
+  let endIso = null;
+  let newDuration = 0;
+
+  if (!isAdd && session && session.is_running) {
+    newDuration = Math.max(0, Math.floor((now.getTime() - startDt.getTime()) / 1000));
+  } else {
+    if (!endDateVal) {
+      showEditError("Please select a valid end date.");
+      return;
+    }
+    if (!endTimeVal) {
+      showEditError("Please enter a valid end time.");
+      return;
+    }
+    endIso = buildIsoFromDateAndTime(endDateVal, endTimeVal);
+    const endDt = new Date(endIso);
+
+    // Error Prevention: End time earlier than start time
+    if (endDt.getTime() < startDt.getTime()) {
+      showEditError("End date & time cannot be earlier than start date & time.");
+      return;
+    }
+
+    // Error Prevention: Session duration exceeds 24 hours
+    const diffSec = Math.floor((endDt.getTime() - startDt.getTime()) / 1000);
+    if (diffSec > 86400) {
+      showEditError("Session duration cannot exceed 24 hours (86,400s).");
+      return;
+    }
+    newDuration = diffSec;
+  }
+
+  // Error Prevention / Warning: session duration vs target
+  if (currentState && currentState.workday && currentState.workday.id === targetWorkdayId) {
+    const oldDuration = (!isAdd && session) ? (session.duration_seconds || 0) : 0;
+    const durationDelta = newDuration - oldDuration;
+    const currentCompleted = currentState.total_completed_seconds || 0;
+    const projectedCompleted = currentCompleted + durationDelta;
+    const target = currentState.workday.target_seconds || 0;
+
+    if (projectedCompleted > 86400) {
+      showEditError("Total completed workday time cannot exceed 24 hours.");
+      return;
+    }
+
+    if (target > 0 && newDuration > target) {
+      const confirmExceed = await confirmModal(
+        `This session (${formatSeconds(newDuration)}) exceeds the entire daily target of ${formatSeconds(target)}. Do you want to proceed?`,
+        "Exceeds Target Warning"
+      );
+      if (!confirmExceed) {
+        return;
+      }
+    }
+  }
+
+  try {
+    modalBtnEditSave.disabled = true;
+    if (isAdd) {
+      await invoke("add_session_to_workday", {
+        workdayId: targetWorkdayId,
+        startTime: startIso,
+        endTime: endIso,
+        dateStr: startDateVal,
+        endDateStr: endDateVal,
+      });
+      showToast("New session added successfully!");
+    } else {
+      await invoke("update_session", {
+        sessionId: session.id,
+        startTime: startIso,
+        endTime: endIso,
+        dateStr: startDateVal,
+        endDateStr: session.is_running ? null : endDateVal,
+      });
+      showToast("Session updated successfully!");
+    }
+    modalEditSession.classList.add("hidden");
+    editingSessionContext = null;
+    if (onSaveSuccess) {
+      await onSaveSuccess();
+    }
+  } catch (err) {
+    showEditError(String(err));
+  } finally {
+    modalBtnEditSave.disabled = false;
+  }
+});
+
+// Preview Session Modal Handler
+function openPreviewSessionModal(session, sessionIndex) {
+  previewSessionNum.innerText = `#${sessionIndex}`;
+
+  const startDateFormatted = formatCompactDate(session.start_time, session.date_str);
+  const startTimeFormatted = formatTimeString(session.start_time);
+  previewStartDt.innerText = `${startDateFormatted}  ${startTimeFormatted}`;
+
+  if (session.is_running) {
+    previewEndDt.innerText = "RUNNING (Active now)";
+    previewDuration.innerText = formatSeconds(session.duration_seconds) + " (live)";
+  } else {
+    const endDateFormatted = formatCompactDate(session.end_time, session.end_date_str || session.date_str);
+    const endTimeFormatted = formatTimeString(session.end_time);
+    previewEndDt.innerText = `${endDateFormatted}  ${endTimeFormatted}`;
+    previewDuration.innerText = formatSeconds(session.duration_seconds);
+  }
+
+  modalPreviewSession.classList.remove("hidden");
+}
+
+modalBtnPreviewClose.addEventListener("click", () => {
+  modalPreviewSession.classList.add("hidden");
+});
+
+modalPreviewSession.addEventListener("click", (e) => {
+  if (e.target === modalPreviewSession) {
+    modalPreviewSession.classList.add("hidden");
+  }
+});
+
+function computeWorkdayBadge(status, totalSeconds, targetSeconds) {
+  if (status === "discarded") {
+    return { label: "Discarded", cls: "status-discarded" };
+  }
+  if (status === "active") {
+    return { label: "Active", cls: "status-active" };
+  }
+  if (status === "ended_early") {
+    return { label: "Ended Early", cls: "status-ended_early" };
+  }
+  
+  // Status is completed or checking against target
+  if (targetSeconds > 0) {
+    const totalMinutes = Math.floor(totalSeconds / 60);
+    const targetMinutes = Math.floor(targetSeconds / 60);
+
+    if (totalMinutes > targetMinutes) {
+      return { label: "Overtime", cls: "status-overtime" };
+    } else if (totalMinutes === targetMinutes) {
+      return { label: "Completed", cls: "status-completed" };
+    } else {
+      // Completed early
+      return { label: "Ended Early", cls: "status-ended_early" };
+    }
+  }
+
+  return { label: "Completed", cls: "status-completed" };
 }
 
 function showToast(msg) {
@@ -177,18 +538,7 @@ btnPin.addEventListener("click", async () => {
   }
 });
 
-// Compact Sticky Mode Toggle & Header Auto-hide
-let headerHideTimeout = null;
-
-function showCompactHeaderBriefly() {
-  if (!isCompactMode || !appHeader) return;
-  appHeader.classList.add("header-visible");
-  if (headerHideTimeout) clearTimeout(headerHideTimeout);
-  headerHideTimeout = setTimeout(() => {
-    appHeader.classList.remove("header-visible");
-  }, 2200);
-}
-
+// Compact Sticky Mode Toggle
 async function setCompactMode(enable) {
   if (isCompactMode === enable) return;
   isCompactMode = enable;
@@ -197,12 +547,9 @@ async function setCompactMode(enable) {
 
   try {
     if (isCompactMode) {
-      await invoke("resize_window", { width: 280, height: 110 });
-      showCompactHeaderBriefly();
+      await invoke("resize_window", { width: 400, height: 125 });
     } else {
-      if (headerHideTimeout) clearTimeout(headerHideTimeout);
-      appHeader.classList.remove("header-visible");
-      await invoke("resize_window", { width: 320, height: 480 });
+      await invoke("resize_window", { width: 400, height: 520 });
     }
   } catch (err) {
     console.error("Failed to resize window:", err);
@@ -252,17 +599,45 @@ function renderUI(state) {
       targetMetBanner.classList.add("hidden");
     }
 
-    // Sessions table
+    // Sessions table: Shows #, Duration, and Actions (Preview Details + Edit)
     sessionCount.innerText = state.sessions.length;
     sessionTbody.innerHTML = "";
     state.sessions.forEach((s, idx) => {
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td>${idx + 1}</td>
-        <td>${formatTimeString(s.start_time)}</td>
-        <td>${s.end_time ? formatTimeString(s.end_time) : (s.is_running ? "RUNNING" : "--")}</td>
         <td>${formatSeconds(s.duration_seconds)}</td>
+        <td>
+          <div class="session-actions-cell">
+            <button class="btn-icon-cell btn-preview-session" title="Preview details (Date, Start & End times)" data-session-id="${s.id}">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+            </button>
+            <button class="btn-icon-cell btn-edit-session" title="Edit session times" data-session-id="${s.id}">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 20h9"></path>
+                <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+              </svg>
+            </button>
+          </div>
+        </td>
       `;
+
+      const btnPreview = tr.querySelector(".btn-preview-session");
+      btnPreview.addEventListener("click", () => {
+        openPreviewSessionModal(s, idx + 1);
+      });
+
+      const btnEdit = tr.querySelector(".btn-edit-session");
+      btnEdit.addEventListener("click", () => {
+        openEditSessionModal(s, async () => {
+          const updated = await invoke("get_current_state", { currentWorkdayId: state.workday.id });
+          renderUI(updated);
+        }, idx + 1);
+      });
+
       sessionTbody.appendChild(tr);
     });
 
@@ -365,7 +740,9 @@ btnFinishDay.addEventListener("click", async () => {
   if (!currentState || !currentState.workday) return;
   const confirmed = await confirmModal("Finish today's workday and mark as completed?", "Finish Day");
   if (confirmed) {
-    const status = currentState.is_target_reached ? "completed" : "ended_early";
+    const totalMinutes = Math.floor((currentState.total_completed_seconds || 0) / 60);
+    const targetMinutes = Math.floor((currentState.workday.target_seconds || 0) / 60);
+    const status = totalMinutes >= targetMinutes ? "completed" : "ended_early";
     await invoke("finish_day", { workdayId: currentState.workday.id, status });
     initApp();
   }
@@ -380,15 +757,33 @@ btnDiscardDay.addEventListener("click", async () => {
   }
 });
 
+// Add manual session to today
+if (btnAddTodaySession) {
+  btnAddTodaySession.addEventListener("click", () => {
+    if (!currentState || !currentState.workday) return;
+    openAddSessionModal(currentState.workday.id, async () => {
+      const updated = await invoke("get_current_state", { currentWorkdayId: currentState.workday.id });
+      renderUI(updated);
+    });
+  });
+}
+
 // Copy TSV log for spreadsheets
 btnCopyLog.addEventListener("click", () => {
   if (!currentState || !currentState.sessions.length) {
     showToast("No sessions to copy");
     return;
   }
-  let tsv = "#\tStart Time\tEnd Time\tDuration (s)\tDuration (formatted)\n";
+  let tsv = "#\tStart Date\tStart Time\tEnd Date\tEnd Time\tDuration (s)\tDuration (formatted)\n";
   currentState.sessions.forEach((s, idx) => {
-    tsv += `${idx + 1}\t${formatTimeString(s.start_time)}\t${formatTimeString(s.end_time)}\t${s.duration_seconds}\t${formatSeconds(s.duration_seconds)}\n`;
+    const startDateVal = formatCompactDate(s.start_time, s.date_str);
+    const endDateVal = s.end_time
+      ? formatCompactDate(s.end_time, s.end_date_str || s.date_str)
+      : (s.is_running ? "RUNNING" : "--/--/--");
+    const startTimeVal = formatTimeString(s.start_time);
+    const endTimeVal = s.end_time ? formatTimeString(s.end_time) : (s.is_running ? "RUNNING" : "--:--:--");
+
+    tsv += `${idx + 1}\t${startDateVal}\t${startTimeVal}\t${endDateVal}\t${endTimeVal}\t${s.duration_seconds}\t${formatSeconds(s.duration_seconds)}\n`;
   });
   tsv += `\nDaily Target:\t${formatSeconds(currentState.workday.target_seconds)}\n`;
   tsv += `Total Completed:\t${formatSeconds(currentState.total_completed_seconds)}\n`;
@@ -440,32 +835,38 @@ async function loadHistory() {
     list.forEach((item) => {
       const card = document.createElement("div");
       card.className = "history-card";
+      const badge = computeWorkdayBadge(item.status, item.total_seconds, item.target_seconds);
+      const isDiscarded = item.status === "discarded";
+
       card.innerHTML = `
         <div class="history-header">
           <span>${item.date_str}</span>
-          <span style="color: ${item.status === 'completed' ? 'var(--success)' : (item.status === 'discarded' ? 'var(--danger)' : 'var(--warning)')}; text-transform: capitalize;">
-            ${item.status.replace('_', ' ')}
+          <span class="status-badge ${badge.cls}">
+            ${badge.label}
           </span>
         </div>
         <div class="history-meta">
           <span>Target: ${formatSeconds(item.target_seconds)} | Worked: ${formatSeconds(item.total_seconds)}</span>
-          <button class="btn btn-xs btn-history-details" data-id="${item.id}">View Sessions (${item.session_count})</button>
+          <div style="display: flex; gap: 4px; align-items: center;">
+            ${!isDiscarded ? `<button class="btn btn-xs btn-add-history-session" title="Add session to this workday" data-id="${item.id}">+ Add Session</button>` : ''}
+            <button class="btn btn-xs btn-history-details" data-id="${item.id}">View Sessions (${item.session_count})</button>
+          </div>
         </div>
         <div class="history-detail-panel hidden" id="history-detail-${item.id}">
           <div class="history-actions" style="margin-bottom: 6px;">
             <button class="btn btn-xs btn-copy-history" data-id="${item.id}">📋 Copy Log</button>
+            ${!isDiscarded ? `<button class="btn btn-xs btn-resume-workday" data-id="${item.id}">▶ Resume as Active</button>` : ''}
           </div>
           <table class="session-table" style="margin-bottom: 4px;">
             <thead>
               <tr>
-                <th>#</th>
-                <th>Start</th>
-                <th>End</th>
+                <th style="width: 28px;">#</th>
                 <th>Duration</th>
+                <th style="width: 60px; text-align: right;">Actions</th>
               </tr>
             </thead>
             <tbody id="history-tbody-${item.id}">
-              <tr><td colspan="4" style="color: var(--text-muted);">Loading...</td></tr>
+              <tr><td colspan="3" style="color: var(--text-muted);">Loading...</td></tr>
             </tbody>
           </table>
         </div>
@@ -475,6 +876,35 @@ async function loadHistory() {
       const detailPanel = card.querySelector(`#history-detail-${item.id}`);
       const tbody = card.querySelector(`#history-tbody-${item.id}`);
       const btnCopyHistory = card.querySelector(".btn-copy-history");
+      const btnAddHistorySession = card.querySelector(".btn-add-history-session");
+      const btnResumeWorkday = card.querySelector(".btn-resume-workday");
+
+      if (btnAddHistorySession) {
+        btnAddHistorySession.addEventListener("click", () => {
+          openAddSessionModal(item.id, async () => {
+            await loadHistory();
+          });
+        });
+      }
+
+      if (btnResumeWorkday) {
+        btnResumeWorkday.addEventListener("click", async () => {
+          const confirmed = await confirmModal(
+            `Resume ${item.date_str} as your currently active workday?`,
+            "Resume Workday"
+          );
+          if (confirmed) {
+            try {
+              const state = await invoke("resume_workday", { workdayId: item.id });
+              screenHistory.classList.add("hidden");
+              renderUI(state);
+              showToast("Workday resumed as active!");
+            } catch (err) {
+              showToast(String(err));
+            }
+          }
+        });
+      }
 
       let detailsLoaded = false;
       let dayData = null;
@@ -488,22 +918,50 @@ async function loadHistory() {
             dayData = await invoke("get_workday_details", { workdayId: item.id });
             tbody.innerHTML = "";
             if (!dayData.sessions.length) {
-              tbody.innerHTML = '<tr><td colspan="4" style="color: var(--text-muted);">No sessions recorded.</td></tr>';
+              tbody.innerHTML = '<tr><td colspan="3" style="color: var(--text-muted);">No sessions recorded.</td></tr>';
             } else {
               dayData.sessions.forEach((s, idx) => {
                 const tr = document.createElement("tr");
                 tr.innerHTML = `
                   <td>${idx + 1}</td>
-                  <td>${formatTimeString(s.start_time)}</td>
-                  <td>${s.end_time ? formatTimeString(s.end_time) : (s.is_running ? "RUNNING" : "--")}</td>
                   <td>${formatSeconds(s.duration_seconds)}</td>
+                  <td>
+                    <div class="session-actions-cell">
+                      <button class="btn-icon-cell btn-history-preview-session" title="Preview details (Date, Start & End times)" data-session-id="${s.id}">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                          <circle cx="12" cy="12" r="3"></circle>
+                        </svg>
+                      </button>
+                      <button class="btn-icon-cell btn-history-edit-session" title="Edit session times" data-session-id="${s.id}">
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M12 20h9"></path>
+                          <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+                        </svg>
+                      </button>
+                    </div>
+                  </td>
                 `;
+
+                const btnPreview = tr.querySelector(".btn-history-preview-session");
+                btnPreview.addEventListener("click", () => {
+                  openPreviewSessionModal(s, idx + 1);
+                });
+
+                const btnEdit = tr.querySelector(".btn-history-edit-session");
+                btnEdit.addEventListener("click", () => {
+                  openEditSessionModal(s, async () => {
+                    dayData = await invoke("get_workday_details", { workdayId: item.id });
+                    await loadHistory();
+                  }, idx + 1);
+                });
+
                 tbody.appendChild(tr);
               });
             }
             detailsLoaded = true;
           } catch (e) {
-            tbody.innerHTML = `<tr><td colspan="4" style="color: var(--danger);">Failed to load sessions: ${e}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="3" style="color: var(--danger);">Failed to load sessions: ${e}</td></tr>`;
           }
         }
       });
@@ -521,9 +979,16 @@ async function loadHistory() {
           showToast("No sessions to copy");
           return;
         }
-        let tsv = "#\tStart Time\tEnd Time\tDuration (s)\tDuration (formatted)\n";
+        let tsv = "#\tStart Date\tStart Time\tEnd Date\tEnd Time\tDuration (s)\tDuration (formatted)\n";
         dayData.sessions.forEach((s, idx) => {
-          tsv += `${idx + 1}\t${formatTimeString(s.start_time)}\t${formatTimeString(s.end_time)}\t${s.duration_seconds}\t${formatSeconds(s.duration_seconds)}\n`;
+          const startDateVal = formatCompactDate(s.start_time, s.date_str);
+          const endDateVal = s.end_time
+            ? formatCompactDate(s.end_time, s.end_date_str || s.date_str)
+            : (s.is_running ? "RUNNING" : "--/--/--");
+          const startTimeVal = formatTimeString(s.start_time);
+          const endTimeVal = s.end_time ? formatTimeString(s.end_time) : (s.is_running ? "RUNNING" : "--:--:--");
+
+          tsv += `${idx + 1}\t${startDateVal}\t${startTimeVal}\t${endDateVal}\t${endTimeVal}\t${s.duration_seconds}\t${formatSeconds(s.duration_seconds)}\n`;
         });
         tsv += `\nDaily Target:\t${formatSeconds(dayData.workday.target_seconds)}\n`;
         tsv += `Total Completed:\t${formatSeconds(dayData.total_completed_seconds)}\n`;
