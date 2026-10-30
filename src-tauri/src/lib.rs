@@ -43,20 +43,46 @@ pub struct AppState {
     pub db: Mutex<Connection>,
 }
 
-fn get_db_path(app: &AppHandle) -> PathBuf {
-    // Portable database: look next to the executable first
+fn is_portable_mode() -> bool {
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
-            let portable_db = exe_dir.join("work_timer.db");
-            // If the executable directory is writable or already has the file, use it
-            if portable_db.exists() {
-                return portable_db;
+            // If running from standard LocalAppData Programs directory, it's the installed NSIS version
+            if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+                let nsis_dir = PathBuf::from(local_app_data).join("Programs").join("WorkTimer");
+                if exe_dir.starts_with(&nsis_dir) {
+                    return false;
+                }
             }
-            // Check if we can write to exe_dir
+            // If work_timer.db exists in the exe directory, it's definitely running portable
+            if exe_dir.join("work_timer.db").exists() {
+                return true;
+            }
+            // Check if exe_dir is writable (typical for portable usage like desktop or usb)
             let test_file = exe_dir.join(".write_test");
             if fs::write(&test_file, b"test").is_ok() {
                 let _ = fs::remove_file(&test_file);
-                return portable_db;
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn cleanup_old_executable() {
+    if let Ok(exe_path) = std::env::current_exe() {
+        let old_exe = exe_path.with_extension("exe.old");
+        if old_exe.exists() {
+            let _ = fs::remove_file(old_exe);
+        }
+    }
+}
+
+fn get_db_path(app: &AppHandle) -> PathBuf {
+    // Portable database: look next to the executable first
+    if is_portable_mode() {
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(exe_dir) = exe_path.parent() {
+                return exe_dir.join("work_timer.db");
             }
         }
     }
@@ -659,7 +685,7 @@ fn start_dragging(app: AppHandle) -> Result<(), String> {
 }
 
 /// Check GitHub Releases for a newer version.
-/// Returns { available: bool, version: String, body: String }
+/// Returns { available: bool, version: String, body: String, is_portable: bool }
 #[tauri::command]
 async fn check_for_update(app: AppHandle) -> Result<serde_json::Value, String> {
     use tauri_plugin_updater::UpdaterExt;
@@ -668,11 +694,79 @@ async fn check_for_update(app: AppHandle) -> Result<serde_json::Value, String> {
         Ok(Some(update)) => Ok(serde_json::json!({
             "available": true,
             "version": update.version,
-            "body": update.body.unwrap_or_default()
+            "body": update.body.unwrap_or_default(),
+            "is_portable": is_portable_mode()
         })),
-        Ok(None) => Ok(serde_json::json!({ "available": false, "version": "", "body": "" })),
+        Ok(None) => Ok(serde_json::json!({
+            "available": false,
+            "version": "",
+            "body": "",
+            "is_portable": is_portable_mode()
+        })),
         Err(e) => Err(e.to_string()),
     }
+}
+
+/// Helper function to perform in-place portable update on Windows.
+async fn install_portable_update(app: &AppHandle, version: &str) -> Result<(), String> {
+    let current_exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let exe_dir = current_exe.parent().ok_or("Cannot get executable directory")?;
+    
+    // Download URL for the portable binary from GitHub Releases
+    let url = format!(
+        "https://github.com/arvinpaoloqdiaz/WorkInADay/releases/download/v{}/WorkTimer.exe",
+        version
+    );
+
+    let client = reqwest::Client::builder()
+        .user_agent("WorkTimer-Portable-Updater")
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to download update: {}", e))?;
+
+    if !response.status().is_success() {
+        return Err(format!("Download failed with status: {}", response.status()));
+    }
+
+    let bytes = response
+        .bytes()
+        .await
+        .map_err(|e| format!("Failed to read update bytes: {}", e))?;
+
+    let new_exe = exe_dir.join("WorkTimer.exe.new");
+    let old_exe = current_exe.with_extension("exe.old");
+
+    // Write newly downloaded binary to a temporary file
+    fs::write(&new_exe, &bytes).map_err(|e| format!("Failed to save new executable: {}", e))?;
+
+    // Remove any previous .old file if it exists
+    if old_exe.exists() {
+        let _ = fs::remove_file(&old_exe);
+    }
+
+    // Rename current running executable -> WorkTimer.exe.old (allowed on Windows even while running)
+    fs::rename(&current_exe, &old_exe)
+        .map_err(|e| format!("Failed to stage update (rename current): {}", e))?;
+
+    // Rename WorkTimer.exe.new -> current executable name
+    if let Err(e) = fs::rename(&new_exe, &current_exe) {
+        // Roll back if replacement fails
+        let _ = fs::rename(&old_exe, &current_exe);
+        return Err(format!("Failed to install new executable: {}", e));
+    }
+
+    // Launch the updated executable and exit current process
+    std::process::Command::new(&current_exe)
+        .spawn()
+        .map_err(|e| format!("Failed to restart updated application: {}", e))?;
+
+    app.exit(0);
+    Ok(())
 }
 
 /// Download and install the update, then relaunch.
@@ -681,12 +775,16 @@ async fn install_update(app: AppHandle) -> Result<(), String> {
     use tauri_plugin_updater::UpdaterExt;
     let updater = app.updater().map_err(|e| e.to_string())?;
     if let Some(update) = updater.check().await.map_err(|e| e.to_string())? {
-        update
-            .download_and_install(|_chunk, _total| {}, || {})
-            .await
-            .map_err(|e| e.to_string())?;
-        // Relaunch after install
-        app.restart();
+        if is_portable_mode() {
+            install_portable_update(&app, &update.version).await?;
+        } else {
+            update
+                .download_and_install(|_chunk, _total| {}, || {})
+                .await
+                .map_err(|e| e.to_string())?;
+            // Relaunch after install
+            app.restart();
+        }
     }
     Ok(())
 }
@@ -699,6 +797,7 @@ pub fn run() {
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            cleanup_old_executable();
             let db_path = get_db_path(&app.handle());
             let conn = Connection::open(db_path).expect("Failed to open SQLite database");
             init_db(&conn).expect("Failed to initialize database schema");

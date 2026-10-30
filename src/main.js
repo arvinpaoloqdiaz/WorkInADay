@@ -1123,8 +1123,10 @@ btnCheckUpdate.addEventListener("click", async () => {
   try {
     const result = await invoke("check_for_update");
     if (result.available) {
-      updateVersionText.innerText = `Version ${result.version} is available.`;
+      const modeLabel = result.is_portable ? " (Portable)" : "";
+      updateVersionText.innerText = `Version ${result.version}${modeLabel} is available.`;
       updateBodyText.innerText = result.body || "";
+      modalBtnUpdateInstall.innerText = result.is_portable ? "Update & Restart" : "Install & Restart";
       modalUpdate.classList.remove("hidden");
     } else {
       showToast("You're on the latest version ✓");
