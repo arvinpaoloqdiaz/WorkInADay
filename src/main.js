@@ -6,14 +6,32 @@ const appWindow = getCurrentWindow();
 // App State
 let currentState = null;
 let timerInterval = null;
+let clockInterval = null;
 let isAlwaysOnTop = true;
 let isCompactMode = false;
+let isCanadaMode = localStorage.getItem("work_timer_canada_mode") === "true";
+let isSettingsOpen = false;
+const CANADA_TIMEZONE = "America/Toronto";
 
 // DOM Elements
 const appRoot = document.getElementById("app-root");
 const screenSetup = document.getElementById("screen-setup");
 const screenActive = document.getElementById("screen-active");
 const screenHistory = document.getElementById("screen-history");
+const screenSettings = document.getElementById("screen-settings");
+
+const canadaInfoBar = document.getElementById("canada-info-bar");
+const canadaLiveTime = document.getElementById("canada-live-time");
+const localLiveTime = document.getElementById("local-live-time");
+
+const btnSettingsToggle = document.getElementById("btn-settings-toggle");
+const btnCloseSettings = document.getElementById("btn-close-settings");
+const toggleCanadaMode = document.getElementById("toggle-canada-mode");
+const canadaPreviewNote = document.getElementById("canada-preview-note");
+const canadaSettingsPreviewTime = document.getElementById("canada-settings-preview-time");
+const settingsCurrentHotkey = document.getElementById("settings-current-hotkey");
+const btnSettingsConfigureHotkey = document.getElementById("btn-settings-configure-hotkey");
+const btnSettingsCheckUpdate = document.getElementById("btn-settings-check-update");
 
 const inputHours = document.getElementById("input-hours");
 const inputMinutes = document.getElementById("input-minutes");
@@ -136,14 +154,246 @@ function formatSeconds(totalSec) {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-function formatTimeString(isoString) {
+// Format time without seconds in 12-hour AM/PM format (e.g. "5:35 AM")
+function formatTimeWithoutSeconds(isoString, timeZone = null) {
+  if (!isoString) return "";
+  const d = new Date(isoString);
+  if (isNaN(d.getTime())) return "";
+
+  const options = {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  };
+  if (timeZone) {
+    options.timeZone = timeZone;
+  }
+  return new Intl.DateTimeFormat("en-US", options).format(d);
+}
+
+// Format date as M/D/YYYY (e.g. "10/30/2026")
+function formatDocDate(isoString, fallbackDateStr, timeZone = null) {
+  let d = null;
+  if (isoString) {
+    const parsed = new Date(isoString);
+    if (!isNaN(parsed.getTime())) d = parsed;
+  }
+  if (!d && fallbackDateStr) {
+    const parts = fallbackDateStr.trim().split("-");
+    if (parts.length === 3) {
+      const year = parseInt(parts[0], 10);
+      const month = parseInt(parts[1], 10) - 1;
+      const day = parseInt(parts[2], 10);
+      d = new Date(year, month, day);
+    } else {
+      const parsed = new Date(fallbackDateStr);
+      if (!isNaN(parsed.getTime())) d = parsed;
+    }
+  }
+  if (!d || isNaN(d.getTime())) return "";
+
+  if (timeZone) {
+    const options = { month: "numeric", day: "numeric", year: "numeric", timeZone };
+    const parts = new Intl.DateTimeFormat("en-US", options).formatToParts(d);
+    let m = "", day = "", y = "";
+    for (const p of parts) {
+      if (p.type === "month") m = p.value;
+      if (p.type === "day") day = p.value;
+      if (p.type === "year") y = p.value;
+    }
+    return `${m}/${day}/${y}`;
+  }
+
+  return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
+}
+
+// Copy session data formatted for Google Docs table (Login, Logout, Time/Date Ended)
+async function copySessionForDoc(session) {
+  if (!session || session.is_running || !session.end_time) {
+    showToast("Session must be completed to copy for Docs");
+    return;
+  }
+
+  const tz = isCanadaMode ? CANADA_TIMEZONE : null;
+  const loginTime = formatTimeWithoutSeconds(session.start_time, tz);
+  const logoutTime = formatTimeWithoutSeconds(session.end_time, tz);
+  const endDateStr = formatDocDate(session.end_time, session.end_date_str || session.date_str, tz);
+  const timeDateEnded = `${logoutTime} ${endDateStr}`.trim();
+
+  const plainText = `${loginTime}\t${logoutTime}\t${timeDateEnded}`;
+  const cellStyle = "border: 1pt solid #000000; padding: 4pt 6pt;";
+  const htmlTable = `<table border="1" style="border-collapse: collapse; border: 1pt solid #000000;"><tbody><tr><td style="${cellStyle}">${loginTime}</td><td style="${cellStyle}">${logoutTime}</td><td style="${cellStyle}">${timeDateEnded}</td></tr></tbody></table>`;
+
+  try {
+    if (navigator.clipboard && window.ClipboardItem) {
+      const htmlBlob = new Blob([htmlTable], { type: "text/html" });
+      const textBlob = new Blob([plainText], { type: "text/plain" });
+      const clipboardItem = new ClipboardItem({
+        "text/html": htmlBlob,
+        "text/plain": textBlob,
+      });
+      await navigator.clipboard.write([clipboardItem]);
+    } else {
+      await navigator.clipboard.writeText(plainText);
+    }
+    showToast(`Copied for Doc! (${loginTime}, ${logoutTime}, ${timeDateEnded})`);
+  } catch (err) {
+    console.warn("ClipboardItem failed, using fallback:", err);
+    try {
+      await navigator.clipboard.writeText(plainText);
+      showToast(`Copied for Doc! (${loginTime}, ${logoutTime})`);
+    } catch (e) {
+      showToast("Failed to copy to clipboard: " + e);
+    }
+  }
+}
+
+// 12-Hour format with AM/PM (e.g. "10:00:45 PM")
+function formatTimeString(isoString, timeZone = null) {
   if (!isoString) return "--:--:--";
   const d = new Date(isoString);
-  return d.toTimeString().split(" ")[0];
+  if (isNaN(d.getTime())) return "--:--:--";
+  
+  const options = {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  };
+  if (timeZone) {
+    options.timeZone = timeZone;
+  }
+  return new Intl.DateTimeFormat("en-US", options).format(d);
+}
+
+// Format date and time for live banners (e.g. "Fri, Oct 30, 2026 • 10:00:45 PM")
+function formatFullDateTime(d = new Date(), timeZone = null) {
+  const options = {
+    weekday: "short",
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+  };
+  if (timeZone) {
+    options.timeZone = timeZone;
+  }
+  return new Intl.DateTimeFormat("en-US", options).format(d).replace(", ", " • ");
+}
+
+// Workday title date format: "Friday, October 30, 2026"
+function getFormattedWorkdayDate(d = new Date(), timeZone = null) {
+  const options = {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  };
+  if (timeZone) {
+    options.timeZone = timeZone;
+  }
+  return new Intl.DateTimeFormat("en-US", options).format(d);
+}
+
+// ISO YYYY-MM-DD in target timezone
+function getDateStrForZone(d = new Date(), timeZone = null) {
+  const options = {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  };
+  if (timeZone) {
+    options.timeZone = timeZone;
+  }
+  const parts = new Intl.DateTimeFormat("en-US", options).formatToParts(d);
+  let year = "";
+  let month = "";
+  let day = "";
+  for (const p of parts) {
+    if (p.type === "year") year = p.value;
+    if (p.type === "month") month = p.value;
+    if (p.type === "day") day = p.value;
+  }
+  return `${year}-${month}-${day}`;
+}
+
+// Build RFC3339 string representing the exact target timezone
+function getRfc3339ForDate(d = new Date(), timeZone = null) {
+  if (!timeZone) {
+    // Return standard local RFC3339 with local offset
+    return buildIsoFromDateAndTime(
+      toInputDateValue(d.toISOString()),
+      `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`
+    );
+  }
+
+  // Get parts in target timezone
+  const options = {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+    timeZoneName: "shortOffset",
+    timeZone,
+  };
+  const parts = new Intl.DateTimeFormat("en-US", options).formatToParts(d);
+  let year = "", month = "", day = "", hour = "", minute = "", second = "", offset = "";
+  for (const p of parts) {
+    if (p.type === "year") year = p.value;
+    if (p.type === "month") month = p.value;
+    if (p.type === "day") day = p.value;
+    if (p.type === "hour") hour = p.value;
+    if (p.type === "minute") minute = p.value;
+    if (p.type === "second") second = p.value;
+    if (p.type === "timeZoneName") offset = p.value; // e.g. "GMT-4" or "GMT-5"
+  }
+
+  // Convert offset like "GMT-4" or "GMT-04:00" to "-04:00"
+  let rfcOffset = "+00:00";
+  if (offset.includes("GMT")) {
+    const raw = offset.replace("GMT", "").trim();
+    if (!raw) {
+      rfcOffset = "+00:00";
+    } else {
+      const sign = raw.startsWith("-") ? "-" : "+";
+      const numPart = raw.replace(/[+-]/, "");
+      if (numPart.includes(":")) {
+        const [h, m] = numPart.split(":");
+        rfcOffset = `${sign}${h.padStart(2, "0")}:${m.padStart(2, "0")}`;
+      } else {
+        rfcOffset = `${sign}${numPart.padStart(2, "0")}:00`;
+      }
+    }
+  }
+
+  return `${year}-${month}-${day}T${hour}:${minute}:${second}${rfcOffset}`;
+}
+
+// Live Clock for Canada and Local times
+function updateDualClockDisplay() {
+  const now = new Date();
+  const canadaStr = formatFullDateTime(now, CANADA_TIMEZONE);
+  const localStr = formatFullDateTime(now);
+
+  if (canadaLiveTime) canadaLiveTime.innerText = canadaStr;
+  if (localLiveTime) localLiveTime.innerText = localStr;
+  if (canadaSettingsPreviewTime) canadaSettingsPreviewTime.innerText = canadaStr;
+}
+
+function startClockTimer() {
+  if (clockInterval) clearInterval(clockInterval);
+  updateDualClockDisplay();
+  clockInterval = setInterval(updateDualClockDisplay, 1000);
 }
 
 // Compact date format DD/MM/YY (e.g. 29/10/26)
-function formatCompactDate(isoString, fallbackDateStr) {
+function formatCompactDate(isoString, fallbackDateStr, timeZone = null) {
   let d = null;
   if (isoString) {
     const parsed = new Date(isoString);
@@ -164,6 +414,18 @@ function formatCompactDate(isoString, fallbackDateStr) {
     }
   }
   if (!d || isNaN(d.getTime())) return "--/--/--";
+
+  if (timeZone) {
+    const options = { day: "2-digit", month: "2-digit", year: "2-digit", timeZone };
+    const parts = new Intl.DateTimeFormat("en-GB", options).formatToParts(d);
+    let dd = "", mm = "", yy = "";
+    for (const p of parts) {
+      if (p.type === "day") dd = p.value;
+      if (p.type === "month") mm = p.value;
+      if (p.type === "year") yy = p.value;
+    }
+    return `${dd}/${mm}/${yy}`;
+  }
 
   const dd = String(d.getDate()).padStart(2, "0");
   const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -423,16 +685,17 @@ modalBtnEditSave.addEventListener("click", async () => {
 function openPreviewSessionModal(session, sessionIndex) {
   previewSessionNum.innerText = `#${sessionIndex}`;
 
-  const startDateFormatted = formatCompactDate(session.start_time, session.date_str);
-  const startTimeFormatted = formatTimeString(session.start_time);
+  const tz = isCanadaMode ? CANADA_TIMEZONE : null;
+  const startDateFormatted = formatCompactDate(session.start_time, session.date_str, tz);
+  const startTimeFormatted = formatTimeString(session.start_time, tz);
   previewStartDt.innerText = `${startDateFormatted}  ${startTimeFormatted}`;
 
   if (session.is_running) {
     previewEndDt.innerText = "RUNNING (Active now)";
     previewDuration.innerText = formatSeconds(session.duration_seconds) + " (live)";
   } else {
-    const endDateFormatted = formatCompactDate(session.end_time, session.end_date_str || session.date_str);
-    const endTimeFormatted = formatTimeString(session.end_time);
+    const endDateFormatted = formatCompactDate(session.end_time, session.end_date_str || session.date_str, tz);
+    const endTimeFormatted = formatTimeString(session.end_time, tz);
     previewEndDt.innerText = `${endDateFormatted}  ${endTimeFormatted}`;
     previewDuration.innerText = formatSeconds(session.duration_seconds);
   }
@@ -564,11 +827,35 @@ btnCompactToggle.addEventListener("click", () => {
 function renderUI(state) {
   currentState = state;
 
+  // Toggle Canada info bar under title bar if Canada mode is enabled
+  if (isCanadaMode) {
+    canadaInfoBar.classList.remove("hidden");
+  } else {
+    canadaInfoBar.classList.add("hidden");
+  }
+
+  // If settings is open, only update the live data (timers) — don't rearrange screens
+  if (isSettingsOpen) {
+    if (state.workday && state.workday.status === "active") {
+      const isRunning = !!state.active_session;
+      if (isRunning) {
+        globalStatusDot.className = "status-dot active";
+        displayCurrentSession.innerText = formatSeconds(state.active_session.duration_seconds);
+      } else {
+        globalStatusDot.className = "status-dot paused";
+      }
+      displayRemaining.innerText = formatSeconds(state.remaining_seconds);
+      displayCompleted.innerText = formatSeconds(state.total_completed_seconds);
+    }
+    return;
+  }
+
   if (state.workday && state.workday.status === "active") {
     // Show Screen B (Active Workday)
     btnCompactToggle.classList.remove("hidden");
     screenSetup.classList.add("hidden");
     screenHistory.classList.add("hidden");
+    screenSettings.classList.add("hidden");
     screenActive.classList.remove("hidden");
 
     activeDateDisplay.innerText = state.workday.date_str;
@@ -599,16 +886,26 @@ function renderUI(state) {
       targetMetBanner.classList.add("hidden");
     }
 
-    // Sessions table: Shows #, Duration, and Actions (Preview Details + Edit)
+    // Sessions table: Shows #, Duration, and Actions (Doc Copy + Preview Details + Edit)
     sessionCount.innerText = state.sessions.length;
     sessionTbody.innerHTML = "";
     state.sessions.forEach((s, idx) => {
+      const isRunning = s.is_running || !s.end_time;
       const tr = document.createElement("tr");
       tr.innerHTML = `
         <td>${idx + 1}</td>
         <td>${formatSeconds(s.duration_seconds)}</td>
         <td>
           <div class="session-actions-cell">
+            <button class="btn-icon-cell btn-copy-doc-session" title="${isRunning ? "Session is running" : "Copy for Docs (Login, Logout, Ended)"}" data-session-id="${s.id}" ${isRunning ? "disabled" : ""}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                <line x1="3" y1="9" x2="21" y2="9"></line>
+                <line x1="3" y1="15" x2="21" y2="15"></line>
+                <line x1="9" y1="3" x2="9" y2="21"></line>
+                <line x1="15" y1="3" x2="15" y2="21"></line>
+              </svg>
+            </button>
             <button class="btn-icon-cell btn-preview-session" title="Preview details (Date, Start & End times)" data-session-id="${s.id}">
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
@@ -624,6 +921,13 @@ function renderUI(state) {
           </div>
         </td>
       `;
+
+      const btnCopyDoc = tr.querySelector(".btn-copy-doc-session");
+      if (btnCopyDoc && !isRunning) {
+        btnCopyDoc.addEventListener("click", () => {
+          copySessionForDoc(s);
+        });
+      }
 
       const btnPreview = tr.querySelector(".btn-preview-session");
       btnPreview.addEventListener("click", () => {
@@ -649,6 +953,7 @@ function renderUI(state) {
     globalStatusDot.className = "status-dot";
     screenActive.classList.add("hidden");
     screenHistory.classList.add("hidden");
+    screenSettings.classList.add("hidden");
     screenSetup.classList.remove("hidden");
 
     if (isCompactMode) {
@@ -693,7 +998,16 @@ btnStartDay.addEventListener("click", async () => {
   const h = parseInt(inputHours.value, 10) || 0;
   const m = parseInt(inputMinutes.value, 10) || 0;
   try {
-    const newState = await invoke("start_day", { targetHours: h, targetMinutes: m });
+    const now = new Date();
+    const customDateStr = isCanadaMode ? getFormattedWorkdayDate(now, CANADA_TIMEZONE) : null;
+    const customCreatedAt = isCanadaMode ? getRfc3339ForDate(now, CANADA_TIMEZONE) : null;
+
+    const newState = await invoke("start_day", {
+      targetHours: h,
+      targetMinutes: m,
+      customDateStr,
+      customCreatedAt,
+    });
     renderUI(newState);
   } catch (err) {
     showToast(String(err));
@@ -704,9 +1018,25 @@ btnToggleSession.addEventListener("click", async () => {
   if (!currentState || !currentState.workday) return;
   const isRunning = !!currentState.active_session;
   try {
-    const newState = isRunning
-      ? await invoke("stop_session", { workdayId: currentState.workday.id })
-      : await invoke("start_session", { workdayId: currentState.workday.id });
+    const now = new Date();
+    let newState;
+    if (isRunning) {
+      const customEndTime = isCanadaMode ? getRfc3339ForDate(now, CANADA_TIMEZONE) : null;
+      const customEndDateStr = isCanadaMode ? getDateStrForZone(now, CANADA_TIMEZONE) : null;
+      newState = await invoke("stop_session", {
+        workdayId: currentState.workday.id,
+        customEndTime,
+        customEndDateStr,
+      });
+    } else {
+      const customStartTime = isCanadaMode ? getRfc3339ForDate(now, CANADA_TIMEZONE) : null;
+      const customDateStr = isCanadaMode ? getDateStrForZone(now, CANADA_TIMEZONE) : null;
+      newState = await invoke("start_session", {
+        workdayId: currentState.workday.id,
+        customStartTime,
+        customDateStr,
+      });
+    }
     renderUI(newState);
   } catch (err) {
     showToast(String(err));
@@ -743,7 +1073,16 @@ btnFinishDay.addEventListener("click", async () => {
     const totalMinutes = Math.floor((currentState.total_completed_seconds || 0) / 60);
     const targetMinutes = Math.floor((currentState.workday.target_seconds || 0) / 60);
     const status = totalMinutes >= targetMinutes ? "completed" : "ended_early";
-    await invoke("finish_day", { workdayId: currentState.workday.id, status });
+    const now = new Date();
+    const customCompletedAt = isCanadaMode ? getRfc3339ForDate(now, CANADA_TIMEZONE) : null;
+    const customEndDateStr = isCanadaMode ? getDateStrForZone(now, CANADA_TIMEZONE) : null;
+
+    await invoke("finish_day", {
+      workdayId: currentState.workday.id,
+      status,
+      customCompletedAt,
+      customEndDateStr,
+    });
     initApp();
   }
 });
@@ -774,14 +1113,15 @@ btnCopyLog.addEventListener("click", () => {
     showToast("No sessions to copy");
     return;
   }
+  const tz = isCanadaMode ? CANADA_TIMEZONE : null;
   let tsv = "#\tStart Date\tStart Time\tEnd Date\tEnd Time\tDuration (s)\tDuration (formatted)\n";
   currentState.sessions.forEach((s, idx) => {
-    const startDateVal = formatCompactDate(s.start_time, s.date_str);
+    const startDateVal = formatCompactDate(s.start_time, s.date_str, tz);
     const endDateVal = s.end_time
-      ? formatCompactDate(s.end_time, s.end_date_str || s.date_str)
+      ? formatCompactDate(s.end_time, s.end_date_str || s.date_str, tz)
       : (s.is_running ? "RUNNING" : "--/--/--");
-    const startTimeVal = formatTimeString(s.start_time);
-    const endTimeVal = s.end_time ? formatTimeString(s.end_time) : (s.is_running ? "RUNNING" : "--:--:--");
+    const startTimeVal = formatTimeString(s.start_time, tz);
+    const endTimeVal = s.end_time ? formatTimeString(s.end_time, tz) : (s.is_running ? "RUNNING" : "--:--:--");
 
     tsv += `${idx + 1}\t${startDateVal}\t${startTimeVal}\t${endDateVal}\t${endTimeVal}\t${s.duration_seconds}\t${formatSeconds(s.duration_seconds)}\n`;
   });
@@ -789,7 +1129,7 @@ btnCopyLog.addEventListener("click", () => {
   tsv += `Total Completed:\t${formatSeconds(currentState.total_completed_seconds)}\n`;
 
   navigator.clipboard.writeText(tsv).then(() => {
-    showToast("Copied TSV to clipboard!");
+    showToast(`Copied TSV to clipboard!${isCanadaMode ? " (Canada ET)" : ""}`);
   });
 });
 
@@ -814,6 +1154,7 @@ btnHistoryToggle.addEventListener("click", async () => {
     btnCompactToggle.classList.add("hidden");
     screenSetup.classList.add("hidden");
     screenActive.classList.add("hidden");
+    screenSettings.classList.add("hidden");
     screenHistory.classList.remove("hidden");
     await loadHistory();
   }
@@ -821,6 +1162,92 @@ btnHistoryToggle.addEventListener("click", async () => {
 
 btnCloseHistory.addEventListener("click", () => {
   btnHistoryToggle.click();
+});
+
+// Settings Screen
+function openSettingsScreen() {
+  if (isCompactMode) {
+    setCompactMode(false);
+  }
+  isSettingsOpen = true;
+  btnCompactToggle.classList.add("hidden");
+  screenSetup.classList.add("hidden");
+  screenActive.classList.add("hidden");
+  screenHistory.classList.add("hidden");
+  screenSettings.classList.remove("hidden");
+
+  // Sync settings UI controls
+  toggleCanadaMode.checked = isCanadaMode;
+  canadaPreviewNote.classList.toggle("hidden", !isCanadaMode);
+  settingsCurrentHotkey.innerText = currentShortcut || "None (Disabled)";
+  updateDualClockDisplay();
+}
+
+function closeSettingsScreen() {
+  isSettingsOpen = false;
+  screenSettings.classList.add("hidden");
+  if (currentState && currentState.workday && currentState.workday.status === "active") {
+    btnCompactToggle.classList.remove("hidden");
+    screenActive.classList.remove("hidden");
+  } else {
+    btnCompactToggle.classList.add("hidden");
+    screenSetup.classList.remove("hidden");
+  }
+}
+
+btnSettingsToggle.addEventListener("click", () => {
+  const isCurrentlyOpen = !screenSettings.classList.contains("hidden");
+  if (isCurrentlyOpen) {
+    closeSettingsScreen();
+  } else {
+    openSettingsScreen();
+  }
+});
+
+btnCloseSettings.addEventListener("click", closeSettingsScreen);
+
+toggleCanadaMode.addEventListener("change", (e) => {
+  isCanadaMode = e.target.checked;
+  localStorage.setItem("work_timer_canada_mode", isCanadaMode ? "true" : "false");
+  canadaPreviewNote.classList.toggle("hidden", !isCanadaMode);
+
+  if (isCanadaMode) {
+    canadaInfoBar.classList.remove("hidden");
+    showToast("Canada Mode enabled (ET - Toronto)");
+  } else {
+    canadaInfoBar.classList.add("hidden");
+    showToast("Canada Mode disabled (Local Windows time)");
+  }
+
+  // Update clock & header
+  updateDualClockDisplay();
+});
+
+btnSettingsConfigureHotkey.addEventListener("click", () => {
+  inputShortcutKey.value = currentShortcut || "F9";
+  modalShortcut.classList.remove("hidden");
+  inputShortcutKey.focus();
+});
+
+btnSettingsCheckUpdate.addEventListener("click", async () => {
+  btnSettingsCheckUpdate.disabled = true;
+  showToast("Checking for updates…");
+  try {
+    const result = await invoke("check_for_update");
+    if (result.available) {
+      const modeLabel = result.is_portable ? " (Portable)" : "";
+      updateVersionText.innerText = `Version ${result.version}${modeLabel} is available.`;
+      updateBodyText.innerText = result.body || "";
+      modalBtnUpdateInstall.innerText = result.is_portable ? "Update & Restart" : "Install & Restart";
+      modalUpdate.classList.remove("hidden");
+    } else {
+      showToast("You're on the latest version ✓");
+    }
+  } catch (err) {
+    showToast("Update check failed: " + err);
+  } finally {
+    btnSettingsCheckUpdate.disabled = false;
+  }
 });
 
 async function loadHistory() {
@@ -854,15 +1281,19 @@ async function loadHistory() {
         </div>
         <div class="history-detail-panel hidden" id="history-detail-${item.id}">
           <div class="history-actions" style="margin-bottom: 6px;">
-            <button class="btn btn-xs btn-copy-history" data-id="${item.id}">📋 Copy Log</button>
-            ${!isDiscarded ? `<button class="btn btn-xs btn-resume-workday" data-id="${item.id}">▶ Resume as Active</button>` : ''}
+            <button class="btn btn-xs btn-copy-history" data-id="${item.id}">
+              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:3px"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>Copy Log
+            </button>
+            ${!isDiscarded ? `<button class="btn btn-xs btn-resume-workday" data-id="${item.id}">
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" stroke="none" style="vertical-align:middle;margin-right:3px"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>Resume as Active
+            </button>` : ''}
           </div>
           <table class="session-table" style="margin-bottom: 4px;">
             <thead>
               <tr>
                 <th style="width: 28px;">#</th>
                 <th>Duration</th>
-                <th style="width: 60px; text-align: right;">Actions</th>
+                <th style="width: 78px; text-align: right;">Actions</th>
               </tr>
             </thead>
             <tbody id="history-tbody-${item.id}">
@@ -921,12 +1352,22 @@ async function loadHistory() {
               tbody.innerHTML = '<tr><td colspan="3" style="color: var(--text-muted);">No sessions recorded.</td></tr>';
             } else {
               dayData.sessions.forEach((s, idx) => {
+                const isRunning = s.is_running || !s.end_time;
                 const tr = document.createElement("tr");
                 tr.innerHTML = `
                   <td>${idx + 1}</td>
                   <td>${formatSeconds(s.duration_seconds)}</td>
                   <td>
                     <div class="session-actions-cell">
+                      <button class="btn-icon-cell btn-history-copy-doc-session" title="${isRunning ? "Session is running" : "Copy for Docs (Login, Logout, Ended)"}" data-session-id="${s.id}" ${isRunning ? "disabled" : ""}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+                          <line x1="3" y1="9" x2="21" y2="9"></line>
+                          <line x1="3" y1="15" x2="21" y2="15"></line>
+                          <line x1="9" y1="3" x2="9" y2="21"></line>
+                          <line x1="15" y1="3" x2="15" y2="21"></line>
+                        </svg>
+                      </button>
                       <button class="btn-icon-cell btn-history-preview-session" title="Preview details (Date, Start & End times)" data-session-id="${s.id}">
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                           <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
@@ -942,6 +1383,13 @@ async function loadHistory() {
                     </div>
                   </td>
                 `;
+
+                const btnCopyDoc = tr.querySelector(".btn-history-copy-doc-session");
+                if (btnCopyDoc && !isRunning) {
+                  btnCopyDoc.addEventListener("click", () => {
+                    copySessionForDoc(s);
+                  });
+                }
 
                 const btnPreview = tr.querySelector(".btn-history-preview-session");
                 btnPreview.addEventListener("click", () => {
@@ -979,14 +1427,15 @@ async function loadHistory() {
           showToast("No sessions to copy");
           return;
         }
+        const tz = isCanadaMode ? CANADA_TIMEZONE : null;
         let tsv = "#\tStart Date\tStart Time\tEnd Date\tEnd Time\tDuration (s)\tDuration (formatted)\n";
         dayData.sessions.forEach((s, idx) => {
-          const startDateVal = formatCompactDate(s.start_time, s.date_str);
+          const startDateVal = formatCompactDate(s.start_time, s.date_str, tz);
           const endDateVal = s.end_time
-            ? formatCompactDate(s.end_time, s.end_date_str || s.date_str)
+            ? formatCompactDate(s.end_time, s.end_date_str || s.date_str, tz)
             : (s.is_running ? "RUNNING" : "--/--/--");
-          const startTimeVal = formatTimeString(s.start_time);
-          const endTimeVal = s.end_time ? formatTimeString(s.end_time) : (s.is_running ? "RUNNING" : "--:--:--");
+          const startTimeVal = formatTimeString(s.start_time, tz);
+          const endTimeVal = s.end_time ? formatTimeString(s.end_time, tz) : (s.is_running ? "RUNNING" : "--:--:--");
 
           tsv += `${idx + 1}\t${startDateVal}\t${startTimeVal}\t${endDateVal}\t${endTimeVal}\t${s.duration_seconds}\t${formatSeconds(s.duration_seconds)}\n`;
         });
@@ -994,7 +1443,7 @@ async function loadHistory() {
         tsv += `Total Completed:\t${formatSeconds(dayData.total_completed_seconds)}\n`;
 
         navigator.clipboard.writeText(tsv).then(() => {
-          showToast(`Copied ${item.date_str} log to clipboard!`);
+          showToast(`Copied ${item.date_str} log to clipboard!${isCanadaMode ? " (Canada ET)" : ""}`);
         });
       });
 
@@ -1008,21 +1457,12 @@ async function loadHistory() {
 // Global Shortcut Management
 let currentShortcut = localStorage.getItem("work_timer_shortcut") || "F9";
 const modalShortcut = document.getElementById("modal-shortcut");
-const btnShortcutToggle = document.getElementById("btn-shortcut-toggle");
 const inputShortcutKey = document.getElementById("input-shortcut-key");
 const modalBtnShortcutSave = document.getElementById("modal-btn-shortcut-save");
 const modalBtnShortcutCancel = document.getElementById("modal-btn-shortcut-cancel");
 const modalBtnShortcutDisable = document.getElementById("modal-btn-shortcut-disable");
 
-btnShortcutToggle.addEventListener("click", () => {
-  if (isCompactMode) {
-    setCompactMode(false);
-  }
-  inputShortcutKey.value = currentShortcut || "F9";
-  modalShortcut.classList.remove("hidden");
-  inputShortcutKey.focus();
-});
-
+// The shortcut modal is opened from Settings > Configure Key (btnSettingsConfigureHotkey)
 // Interactive Keybind Recording: capture key presses directly when focused
 inputShortcutKey.addEventListener("keydown", (e) => {
   e.preventDefault();
@@ -1067,6 +1507,7 @@ modalBtnShortcutSave.addEventListener("click", async () => {
     return;
   }
   await registerGlobalShortcut(newKey);
+  settingsCurrentHotkey.innerText = newKey;
   modalShortcut.classList.add("hidden");
 });
 
@@ -1074,6 +1515,7 @@ modalBtnShortcutDisable.addEventListener("click", async () => {
   await unregisterGlobalShortcut();
   currentShortcut = "";
   localStorage.removeItem("work_timer_shortcut");
+  settingsCurrentHotkey.innerText = "None (Disabled)";
   modalShortcut.classList.add("hidden");
   showToast("Global shortcut disabled");
 });
@@ -1110,33 +1552,12 @@ async function registerGlobalShortcut(shortcutKey) {
 }
 
 // ─── Updater ────────────────────────────────────────────────────────────────
-const btnCheckUpdate = document.getElementById("btn-check-update");
+// Update check is triggered from Settings > "Check for Updates" (btnSettingsCheckUpdate)
 const modalUpdate = document.getElementById("modal-update");
 const updateVersionText = document.getElementById("update-version-text");
 const updateBodyText = document.getElementById("update-body-text");
 const modalBtnUpdateCancel = document.getElementById("modal-btn-update-cancel");
 const modalBtnUpdateInstall = document.getElementById("modal-btn-update-install");
-
-btnCheckUpdate.addEventListener("click", async () => {
-  btnCheckUpdate.disabled = true;
-  showToast("Checking for updates…");
-  try {
-    const result = await invoke("check_for_update");
-    if (result.available) {
-      const modeLabel = result.is_portable ? " (Portable)" : "";
-      updateVersionText.innerText = `Version ${result.version}${modeLabel} is available.`;
-      updateBodyText.innerText = result.body || "";
-      modalBtnUpdateInstall.innerText = result.is_portable ? "Update & Restart" : "Install & Restart";
-      modalUpdate.classList.remove("hidden");
-    } else {
-      showToast("You're on the latest version ✓");
-    }
-  } catch (err) {
-    showToast("Update check failed: " + err);
-  } finally {
-    btnCheckUpdate.disabled = false;
-  }
-});
 
 modalBtnUpdateCancel.addEventListener("click", () => {
   modalUpdate.classList.add("hidden");
@@ -1161,6 +1582,8 @@ modalBtnUpdateInstall.addEventListener("click", async () => {
 
 // ─── Initial App Boot ────────────────────────────────────────────────────────
 async function initApp() {
+  startClockTimer();
+
   try {
     const state = await invoke("get_current_state", { currentWorkdayId: null });
     renderUI(state);

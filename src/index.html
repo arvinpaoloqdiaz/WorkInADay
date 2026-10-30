@@ -31,19 +31,6 @@
             <path d="M5 17h14v-2l-2-2V5a2 2 0 0 0-2-2H9a2 2 0 0 0-2 2v8l-2 2v2z"></path>
           </svg>
         </button>
-        <!-- Global Shortcut Settings button -->
-        <button id="btn-shortcut-toggle" class="icon-btn" title="Configure Global Shortcut (e.g. F9, Ctrl+Shift+S)" aria-label="Shortcut">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
-            <line x1="6" y1="8" x2="6" y2="8"></line>
-            <line x1="10" y1="8" x2="10" y2="8"></line>
-            <line x1="14" y1="8" x2="14" y2="8"></line>
-            <line x1="18" y1="8" x2="18" y2="8"></line>
-            <line x1="6" y1="12" x2="6" y2="12"></line>
-            <line x1="18" y1="12" x2="18" y2="12"></line>
-            <line x1="10" y1="16" x2="14" y2="16"></line>
-          </svg>
-        </button>
         <!-- History button -->
         <button id="btn-history-toggle" class="icon-btn" title="View History" aria-label="Workday history">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -51,11 +38,11 @@
             <polyline points="12 6 12 12 16 14"></polyline>
           </svg>
         </button>
-        <!-- Check for Update -->
-        <button id="btn-check-update" class="icon-btn" title="Check for Update" aria-label="Check for update">
+        <!-- Settings button -->
+        <button id="btn-settings-toggle" class="icon-btn" title="Settings" aria-label="Settings">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="1 4 1 10 7 10"></polyline>
-            <path d="M3.51 15a9 9 0 1 0 .49-4.28"></path>
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
           </svg>
         </button>
         <!-- Minimize window -->
@@ -73,6 +60,23 @@
         </button>
       </div>
     </header>
+
+    <!-- Dual Time & Canada Mode Header Bar (Visible below title bar when Canada Mode is active) -->
+    <div id="canada-info-bar" class="canada-info-bar hidden full-only">
+      <div class="canada-info-item">
+        <span class="canada-flag">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 2 L14 8 L20 8 L16 12 L18 18 L12 14 L6 18 L8 12 L4 8 L10 8 Z" fill="currentColor" stroke="none"/>
+          </svg>
+        </span>
+        <span class="canada-info-label">CANADA (ET):</span>
+        <span class="canada-info-val text-accent" id="canada-live-time">--</span>
+      </div>
+      <div class="canada-info-item">
+        <span class="canada-info-label">LOCAL:</span>
+        <span class="canada-info-val" id="local-live-time">--</span>
+      </div>
+    </div>
 
     <!-- Main Screens Container -->
     <main class="content-area">
@@ -178,7 +182,7 @@
                 <tr>
                   <th style="width: 28px;">#</th>
                   <th>Duration</th>
-                  <th style="width: 60px; text-align: right;">Actions</th>
+                  <th style="width: 78px; text-align: right;">Actions</th>
                 </tr>
               </thead>
               <tbody id="session-tbody"></tbody>
@@ -208,6 +212,85 @@
       </section>
 
     </main>
+
+    <!-- Settings Screen -->
+    <section id="screen-settings" class="screen hidden">
+      <div class="settings-topbar">
+        <h2 class="sub-title">Settings</h2>
+        <button id="btn-close-settings" class="icon-btn" title="Back to timer">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="18" y1="6" x2="6" y2="18"></line>
+            <line x1="6" y1="6" x2="18" y2="18"></line>
+          </svg>
+        </button>
+      </div>
+      <div class="settings-scroll">
+        <!-- Canada Mode Card -->
+        <div class="settings-card">
+          <div class="settings-card-header">
+            <div class="settings-card-info">
+              <span class="settings-card-title">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="2" y1="12" x2="22" y2="12"></line>
+                  <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                </svg>
+                Canada Mode
+              </span>
+              <span class="settings-card-desc">Store &amp; copy workday time/date in Canada Eastern Time (Toronto / EDT/EST).</span>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" id="toggle-canada-mode" />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div id="canada-preview-note" class="settings-card-preview hidden">
+            <span>Currently in Canada: </span><strong id="canada-settings-preview-time">--</strong>
+          </div>
+        </div>
+
+        <!-- Global Hotkey Card -->
+        <div class="settings-card">
+          <div class="settings-card-info">
+            <span class="settings-card-title">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 5px; color: var(--accent);">
+                <rect x="2" y="4" width="20" height="16" rx="2" ry="2"></rect>
+                <line x1="6" y1="8" x2="6" y2="8"></line>
+                <line x1="10" y1="8" x2="10" y2="8"></line>
+                <line x1="14" y1="8" x2="14" y2="8"></line>
+                <line x1="18" y1="8" x2="18" y2="8"></line>
+                <line x1="6" y1="12" x2="6" y2="12"></line>
+                <line x1="18" y1="12" x2="18" y2="12"></line>
+                <line x1="10" y1="16" x2="14" y2="16"></line>
+              </svg>              Global Shortcut
+            </span>
+            <span class="settings-card-desc">Press anytime in any window to Start/Stop sessions.</span>
+          </div>
+          <div class="settings-action-row">
+            <span class="hotkey-badge" id="settings-current-hotkey">F9</span>
+            <button id="btn-settings-configure-hotkey" class="btn btn-sm btn-subtle">Configure Key</button>
+          </div>
+        </div>
+
+        <!-- Updates Card -->
+        <div class="settings-card">
+          <div class="settings-card-info">
+            <span class="settings-card-title">
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: middle; margin-right: 5px; color: var(--accent);">
+                <polyline points="1 4 1 10 7 10"></polyline>
+                <path d="M3.51 15a9 9 0 1 0 .49-4.28"></path>
+              </svg>
+              Software Updates
+            </span>
+            <span class="settings-card-desc">Check for the latest features, improvements, and releases.</span>
+          </div>
+          <div class="settings-action-row">
+            <span class="version-label" id="settings-app-version">v1.2.0</span>
+            <button id="btn-settings-check-update" class="btn btn-sm btn-subtle">Check for Updates</button>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <!-- In-App Confirmation Modal (Replaces browser alert/confirm) -->
     <div id="modal-confirm" class="modal-backdrop hidden">

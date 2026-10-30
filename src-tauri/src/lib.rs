@@ -265,6 +265,8 @@ fn start_day(
     state: tauri::State<'_, AppState>,
     target_hours: i64,
     target_minutes: i64,
+    custom_date_str: Option<String>,
+    custom_created_at: Option<String>,
 ) -> Result<WorkdayState, String> {
     if target_hours < 0 || target_minutes < 0 || target_minutes >= 60 {
         return Err("Invalid target hours or minutes.".to_string());
@@ -276,8 +278,8 @@ fn start_day(
 
     let conn = state.db.lock().map_err(|e| e.to_string())?;
     let now = Local::now();
-    let date_str = now.format("%A, %B %d, %Y").to_string();
-    let created_at = now.to_rfc3339();
+    let date_str = custom_date_str.unwrap_or_else(|| now.format("%A, %B %d, %Y").to_string());
+    let created_at = custom_created_at.unwrap_or_else(|| now.to_rfc3339());
 
     conn.execute(
         "INSERT INTO workdays (date_str, target_seconds, status, created_at) VALUES (?1, ?2, 'active', ?3)",
@@ -293,6 +295,8 @@ fn start_day(
 fn start_session(
     state: tauri::State<'_, AppState>,
     workday_id: i64,
+    custom_start_time: Option<String>,
+    custom_date_str: Option<String>,
 ) -> Result<WorkdayState, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
 
@@ -310,8 +314,8 @@ fn start_session(
     }
 
     let now = Local::now();
-    let now_rfc = now.to_rfc3339();
-    let date_str = now.format("%Y-%m-%d").to_string();
+    let now_rfc = custom_start_time.unwrap_or_else(|| now.to_rfc3339());
+    let date_str = custom_date_str.unwrap_or_else(|| now.format("%Y-%m-%d").to_string());
 
     conn.execute(
         "INSERT INTO sessions (workday_id, date_str, start_time, duration_seconds, is_running) VALUES (?1, ?2, ?3, 0, 1)",
@@ -326,6 +330,8 @@ fn start_session(
 fn stop_session(
     state: tauri::State<'_, AppState>,
     workday_id: i64,
+    custom_end_time: Option<String>,
+    custom_end_date_str: Option<String>,
 ) -> Result<WorkdayState, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
 
@@ -339,11 +345,11 @@ fn stop_session(
 
     if let Some((sess_id, start_time_str)) = session_opt {
         let now = Local::now();
-        let end_rfc = now.to_rfc3339();
-        let end_date_str = now.format("%Y-%m-%d").to_string();
+        let end_rfc = custom_end_time.unwrap_or_else(|| now.to_rfc3339());
+        let end_date_str = custom_end_date_str.unwrap_or_else(|| now.format("%Y-%m-%d").to_string());
         let duration = if let Ok(start_dt) = DateTime::parse_from_rfc3339(&start_time_str) {
-            let start_local = start_dt.with_timezone(&Local);
-            let diff = now.signed_duration_since(start_local).num_seconds();
+            let end_dt = DateTime::parse_from_rfc3339(&end_rfc).unwrap_or(now.into());
+            let diff = end_dt.signed_duration_since(start_dt).num_seconds();
             if diff > 0 {
                 diff
             } else {
@@ -368,6 +374,8 @@ fn finish_day(
     state: tauri::State<'_, AppState>,
     workday_id: i64,
     status: Option<String>,
+    custom_completed_at: Option<String>,
+    custom_end_date_str: Option<String>,
 ) -> Result<WorkdayState, String> {
     let conn = state.db.lock().map_err(|e| e.to_string())?;
 
@@ -381,12 +389,13 @@ fn finish_day(
         .ok();
 
     let now = Local::now();
-    let now_rfc = now.to_rfc3339();
+    let now_rfc = custom_completed_at.unwrap_or_else(|| now.to_rfc3339());
+    let end_date_str = custom_end_date_str.unwrap_or_else(|| now.format("%Y-%m-%d").to_string());
 
     if let Some((sess_id, start_time_str)) = session_opt {
         let duration = if let Ok(start_dt) = DateTime::parse_from_rfc3339(&start_time_str) {
-            let start_local = start_dt.with_timezone(&Local);
-            let diff = now.signed_duration_since(start_local).num_seconds();
+            let end_dt = DateTime::parse_from_rfc3339(&now_rfc).unwrap_or(now.into());
+            let diff = end_dt.signed_duration_since(start_dt).num_seconds();
             if diff > 0 {
                 diff
             } else {
@@ -396,7 +405,6 @@ fn finish_day(
             0
         };
 
-        let end_date_str = now.format("%Y-%m-%d").to_string();
         let _ = conn.execute(
             "UPDATE sessions SET end_time = ?1, end_date_str = ?2, duration_seconds = ?3, is_running = 0 WHERE id = ?4",
             params![now_rfc, end_date_str, duration, sess_id],
