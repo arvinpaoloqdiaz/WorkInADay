@@ -818,6 +818,11 @@ input[type="number"] {
   background: rgba(56, 189, 248, 0.15);
 }
 
+.btn-icon-danger:hover:not(:disabled) {
+  color: var(--danger) !important;
+  background: var(--danger-glow) !important;
+}
+
 /* Preview details */
 .preview-details-list {
   display: flex;

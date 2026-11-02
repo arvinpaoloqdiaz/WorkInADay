@@ -253,7 +253,7 @@ function formatTimeString(isoString, timeZone = null) {
   if (!isoString) return "--:--:--";
   const d = new Date(isoString);
   if (isNaN(d.getTime())) return "--:--:--";
-  
+
   const options = {
     hour: "numeric",
     minute: "2-digit",
@@ -476,7 +476,7 @@ function buildIsoFromDateAndTime(dateStr, timeStr) {
   const day = parseInt(dateParts[2], 10);
 
   const d = new Date(year, month, day, h, m, s);
-  
+
   // Format to local ISO-like string with timezone offset for chrono RFC3339 compatibility
   const pad = (n) => String(n).padStart(2, "0");
   const yyyy = d.getFullYear();
@@ -723,7 +723,7 @@ function computeWorkdayBadge(status, totalSeconds, targetSeconds) {
   if (status === "ended_early") {
     return { label: "Ended Early", cls: "status-ended_early" };
   }
-  
+
   // Status is completed or checking against target
   if (targetSeconds > 0) {
     const totalMinutes = Math.floor(totalSeconds / 60);
@@ -918,6 +918,14 @@ function renderUI(state) {
                 <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
               </svg>
             </button>
+            <button class="btn-icon-cell btn-icon-danger btn-delete-session" title="${isRunning ? "Stop session first to delete" : "Delete session"}" data-session-id="${s.id}" ${isRunning ? "disabled" : ""}>
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                <line x1="10" y1="11" x2="10" y2="17"></line>
+                <line x1="14" y1="11" x2="14" y2="17"></line>
+              </svg>
+            </button>
           </div>
         </td>
       `;
@@ -941,6 +949,25 @@ function renderUI(state) {
           renderUI(updated);
         }, idx + 1);
       });
+
+      const btnDelete = tr.querySelector(".btn-delete-session");
+      if (btnDelete && !isRunning) {
+        btnDelete.addEventListener("click", async () => {
+          const confirmed = await confirmModal(
+            `Delete session #${idx + 1} (${formatSeconds(s.duration_seconds)})? This action cannot be undone.`,
+            "Delete Session"
+          );
+          if (confirmed) {
+            try {
+              const updated = await invoke("delete_session", { sessionId: s.id });
+              renderUI(updated);
+              showToast("Session deleted.");
+            } catch (err) {
+              showToast("Failed to delete session: " + err);
+            }
+          }
+        });
+      }
 
       sessionTbody.appendChild(tr);
     });
@@ -1287,13 +1314,16 @@ async function loadHistory() {
             ${!isDiscarded ? `<button class="btn btn-xs btn-resume-workday" data-id="${item.id}">
               <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor" stroke="none" style="vertical-align:middle;margin-right:3px"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>Resume as Active
             </button>` : ''}
+            <button class="btn btn-xs btn-danger btn-delete-workday" data-id="${item.id}" title="Permanently delete workday and all its sessions">
+              <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:3px"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>Delete Day
+            </button>
           </div>
           <table class="session-table" style="margin-bottom: 4px;">
             <thead>
               <tr>
                 <th style="width: 28px;">#</th>
                 <th>Duration</th>
-                <th style="width: 78px; text-align: right;">Actions</th>
+                <th style="width: 104px; text-align: right;">Actions</th>
               </tr>
             </thead>
             <tbody id="history-tbody-${item.id}">
@@ -1309,6 +1339,29 @@ async function loadHistory() {
       const btnCopyHistory = card.querySelector(".btn-copy-history");
       const btnAddHistorySession = card.querySelector(".btn-add-history-session");
       const btnResumeWorkday = card.querySelector(".btn-resume-workday");
+      const btnDeleteWorkday = card.querySelector(".btn-delete-workday");
+
+      if (btnDeleteWorkday) {
+        btnDeleteWorkday.addEventListener("click", async () => {
+          const confirmed = await confirmModal(
+            `Permanently delete workday ${item.date_str} and all ${item.session_count} connected session(s)?\n\nWarning: This will delete all connected sessions and is NOT restorable.`,
+            "Delete Workday"
+          );
+          if (confirmed) {
+            try {
+              await invoke("delete_workday", { workdayId: item.id });
+              showToast("Workday and sessions deleted.");
+              await loadHistory();
+              // If the deleted workday happened to be the current active workday, refresh main state
+              if (currentState && currentState.workday && currentState.workday.id === item.id) {
+                initApp();
+              }
+            } catch (err) {
+              showToast("Failed to delete workday: " + err);
+            }
+          }
+        });
+      }
 
       if (btnAddHistorySession) {
         btnAddHistorySession.addEventListener("click", () => {
@@ -1380,6 +1433,14 @@ async function loadHistory() {
                           <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
                         </svg>
                       </button>
+                      <button class="btn-icon-cell btn-icon-danger btn-history-delete-session" title="${isRunning ? "Session is running" : "Delete session"}" data-session-id="${s.id}" ${isRunning ? "disabled" : ""}>
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                          <polyline points="3 6 5 6 21 6"></polyline>
+                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                          <line x1="10" y1="11" x2="10" y2="17"></line>
+                          <line x1="14" y1="11" x2="14" y2="17"></line>
+                        </svg>
+                      </button>
                     </div>
                   </td>
                 `;
@@ -1403,6 +1464,25 @@ async function loadHistory() {
                     await loadHistory();
                   }, idx + 1);
                 });
+
+                const btnDeleteSession = tr.querySelector(".btn-history-delete-session");
+                if (btnDeleteSession && !isRunning) {
+                  btnDeleteSession.addEventListener("click", async () => {
+                    const confirmed = await confirmModal(
+                      `Delete session #${idx + 1} (${formatSeconds(s.duration_seconds)})? This action cannot be undone.`,
+                      "Delete Session"
+                    );
+                    if (confirmed) {
+                      try {
+                        await invoke("delete_session", { sessionId: s.id });
+                        showToast("Session deleted.");
+                        await loadHistory();
+                      } catch (err) {
+                        showToast("Failed to delete session: " + err);
+                      }
+                    }
+                  });
+                }
 
                 tbody.appendChild(tr);
               });

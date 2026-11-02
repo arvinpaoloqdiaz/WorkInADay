@@ -649,6 +649,51 @@ fn discard_workday(state: tauri::State<'_, AppState>, workday_id: i64) -> Result
 }
 
 #[tauri::command]
+fn delete_session(
+    state: tauri::State<'_, AppState>,
+    session_id: i64,
+) -> Result<WorkdayState, String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+
+    let workday_id: i64 = conn
+        .query_row(
+            "SELECT workday_id FROM sessions WHERE id = ?1",
+            params![session_id],
+            |r| r.get(0),
+        )
+        .map_err(|e| format!("Session not found: {}", e))?;
+
+    conn.execute("DELETE FROM sessions WHERE id = ?1", params![session_id])
+        .map_err(|e| e.to_string())?;
+
+    calculate_state_internal(&conn, workday_id)
+}
+
+#[tauri::command]
+fn delete_workday(
+    state: tauri::State<'_, AppState>,
+    workday_id: i64,
+) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+
+    // Delete associated sessions first
+    conn.execute(
+        "DELETE FROM sessions WHERE workday_id = ?1",
+        params![workday_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    // Delete the workday itself
+    conn.execute(
+        "DELETE FROM workdays WHERE id = ?1",
+        params![workday_id],
+    )
+    .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
 fn set_always_on_top(app: AppHandle, always_on_top: bool) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("main") {
         window
@@ -826,6 +871,8 @@ pub fn run() {
             add_session_to_workday,
             resume_workday,
             discard_workday,
+            delete_session,
+            delete_workday,
             set_always_on_top,
             resize_window,
             minimize_window,
