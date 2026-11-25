@@ -207,7 +207,7 @@ function formatDocDate(isoString, fallbackDateStr, timeZone = null) {
   return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`;
 }
 
-// Copy session data formatted for Google Docs table (Login, Logout, Time/Date Ended)
+// Copy session data formatted for Google Docs table (Login, Logout)
 async function copySessionForDoc(session) {
   if (!session || session.is_running || !session.end_time) {
     showToast("Session must be completed to copy for Docs");
@@ -217,12 +217,10 @@ async function copySessionForDoc(session) {
   const tz = isCanadaMode ? CANADA_TIMEZONE : null;
   const loginTime = formatTimeWithoutSeconds(session.start_time, tz);
   const logoutTime = formatTimeWithoutSeconds(session.end_time, tz);
-  const endDateStr = formatDocDate(session.end_time, session.end_date_str || session.date_str, tz);
-  const timeDateEnded = `${logoutTime} ${endDateStr}`.trim();
 
-  const plainText = `${loginTime}\t${logoutTime}\t${timeDateEnded}`;
+  const plainText = `${loginTime}\t${logoutTime}`;
   const cellStyle = "border: 1pt solid #000000; padding: 4pt 6pt;";
-  const htmlTable = `<table border="1" style="border-collapse: collapse; border: 1pt solid #000000;"><tbody><tr><td style="${cellStyle}">${loginTime}</td><td style="${cellStyle}">${logoutTime}</td><td style="${cellStyle}">${timeDateEnded}</td></tr></tbody></table>`;
+  const htmlTable = `<table border="1" style="border-collapse: collapse; border: 1pt solid #000000;"><tbody><tr><td style="${cellStyle}">${loginTime}</td><td style="${cellStyle}">${logoutTime}</td></tr></tbody></table>`;
 
   try {
     if (navigator.clipboard && window.ClipboardItem) {
@@ -236,7 +234,7 @@ async function copySessionForDoc(session) {
     } else {
       await navigator.clipboard.writeText(plainText);
     }
-    showToast(`Copied for Doc! (${loginTime}, ${logoutTime}, ${timeDateEnded})`);
+    showToast(`Copied for Doc! (${loginTime}, ${logoutTime})`);
   } catch (err) {
     console.warn("ClipboardItem failed, using fallback:", err);
     try {
@@ -897,7 +895,7 @@ function renderUI(state) {
         <td>${formatSeconds(s.duration_seconds)}</td>
         <td>
           <div class="session-actions-cell">
-            <button class="btn-icon-cell btn-copy-doc-session" title="${isRunning ? "Session is running" : "Copy for Docs (Login, Logout, Ended)"}" data-session-id="${s.id}" ${isRunning ? "disabled" : ""}>
+            <button class="btn-icon-cell btn-copy-doc-session" title="${isRunning ? "Session is running" : "Copy for Docs (Login, Logout)"}" data-session-id="${s.id}" ${isRunning ? "disabled" : ""}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
                 <line x1="3" y1="9" x2="21" y2="9"></line>
@@ -1412,7 +1410,7 @@ async function loadHistory() {
                   <td>${formatSeconds(s.duration_seconds)}</td>
                   <td>
                     <div class="session-actions-cell">
-                      <button class="btn-icon-cell btn-history-copy-doc-session" title="${isRunning ? "Session is running" : "Copy for Docs (Login, Logout, Ended)"}" data-session-id="${s.id}" ${isRunning ? "disabled" : ""}>
+                      <button class="btn-icon-cell btn-history-copy-doc-session" title="${isRunning ? "Session is running" : "Copy for Docs (Login, Logout)"}" data-session-id="${s.id}" ${isRunning ? "disabled" : ""}>
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                           <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
                           <line x1="3" y1="9" x2="21" y2="9"></line>
